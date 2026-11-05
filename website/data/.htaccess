@@ -1,0 +1,2 @@
+# Download counts and cached checksums. Must be writable by the web server, never readable from the web.
+Require all denied

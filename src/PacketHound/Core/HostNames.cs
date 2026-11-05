@@ -1,0 +1,69 @@
+using System;
+using System.Collections.Concurrent;
+using System.Linq;
+using System.Management;
+using System.Net;
+using System.Threading.Tasks;
+
+namespace PacketHound.Core;
+
+/// <summary>
+/// Turns a remote IP into the hostname the app most likely asked for.
+/// First looks in the Windows DNS client cache (which records the name that was queried,
+/// e.g. "api.example.com", even behind CNAME chains), then falls back to reverse DNS.
+/// </summary>
+public static class HostNames
+{
+    static readonly ConcurrentDictionary<string, string?> Cache = new();
+
+    public static async Task<string?> LookupAsync(string address)
+    {
+        if (Cache.TryGetValue(address, out var known) && known != null) return known;
+        if (!IPAddress.TryParse(address, out var ip)) return null;
+
+        var name = await Task.Run(() => FromDnsCache(address));
+        if (name == null)
+        {
+            try
+            {
+                var reverse = Dns.GetHostEntryAsync(ip);
+                if (await Task.WhenAny(reverse, Task.Delay(3000)) == reverse && reverse.IsCompletedSuccessfully)
+                {
+                    var host = reverse.Result.HostName;
+                    if (IsUsefulName(host) && host != address) name = host;
+                }
+            }
+            catch
+            {
+                // No PTR record.
+            }
+        }
+
+        Cache[address] = name;
+        return name;
+    }
+
+    static string? FromDnsCache(string address)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(@"root\StandardCimv2",
+                $"SELECT Entry, Type, Data FROM MSFT_DNSClientCache WHERE Data = '{address.Replace("'", "")}' AND (Type = 1 OR Type = 28)");
+            return searcher.Get().Cast<ManagementObject>()
+                .Select(o => o["Entry"] as string)
+                .Where(IsUsefulName)
+                .OrderBy(e => e!.Length)
+                .FirstOrDefault();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    static bool IsUsefulName(string? name) =>
+        !string.IsNullOrEmpty(name)
+        && !IPAddress.TryParse(name, out _)
+        && !name.EndsWith(".arpa", StringComparison.OrdinalIgnoreCase)
+        && !name.EndsWith(".arpa.", StringComparison.OrdinalIgnoreCase);
+}

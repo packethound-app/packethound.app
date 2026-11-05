@@ -1,0 +1,8 @@
+bin/
+obj/
+publish/
+.vs/
+*.user
+website/downloads/*.exe
+website/data/*.json
+*.stackdump

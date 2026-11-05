@@ -1,0 +1,22 @@
+{
+    "01-prompt.png": {
+        "title": "The Allow / Block prompt",
+        "caption": "Shows the app, its publisher, where it's connecting and on which port."
+    },
+    "02-rules.png": {
+        "title": "Your rules",
+        "caption": "Flip any app between Allow and Block with one switch. Search and sort the list."
+    },
+    "03-activity.png": {
+        "title": "Activity",
+        "caption": "Every blocked attempt, with hostnames. Double-click a row to copy its IP address."
+    },
+    "04-settings.png": {
+        "title": "Settings",
+        "caption": "Choose what counts as Windows, start at sign-in, or restore Windows' defaults."
+    },
+    "05-tray.png": {
+        "title": "Always at hand",
+        "caption": "PacketHound lives in the notification area. Right-click to pause or exit."
+    }
+}
