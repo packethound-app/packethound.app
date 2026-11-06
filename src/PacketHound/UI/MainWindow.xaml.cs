@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     public MainWindow(Controller controller)
     {
         InitializeComponent();
+        Title = $"PacketHound v{UpdateService.CurrentVersion}";
         _controller = controller;
 
         var cellText = (Style)FindResource("CellText");
@@ -147,7 +148,8 @@ public partial class MainWindow : Window
         var q = SearchBox.Text.Trim();
         return q.Length == 0
                || row.AppName.Contains(q, StringComparison.CurrentCultureIgnoreCase)
-               || row.Path.Contains(q, StringComparison.CurrentCultureIgnoreCase);
+               || row.Path.Contains(q, StringComparison.CurrentCultureIgnoreCase)
+               || row.AppliesTo.Contains(q, StringComparison.CurrentCultureIgnoreCase);
     }
 
     void Search_TextChanged(object sender, TextChangedEventArgs e) => _rulesView?.Refresh();

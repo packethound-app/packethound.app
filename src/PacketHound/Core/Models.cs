@@ -8,6 +8,15 @@ namespace PacketHound.Core;
 
 public enum PromptDecision { Later, Allow, Block, Dismiss }
 
+/// <summary>
+/// One entry in the prompt's "Applies to" list. Destination is null for "Any connection". Address and
+/// HostName are the connection the entry was built from, used to seed a host or domain rule.
+/// </summary>
+public sealed record ScopeOption(string Label, RuleDestination? Destination, string Address, string? HostName)
+{
+    public override string ToString() => Label;
+}
+
 /// <summary>An app waiting for the user's Allow/Block decision. Updated as more attempts arrive.</summary>
 public sealed class PendingRequest : INotifyPropertyChanged
 {
@@ -120,7 +129,8 @@ public sealed class RuleRow
     public string Action => Rule.Allow ? "Allow" : "Block";
     public bool IsAllow => Rule.Allow;
     public string Kind => Rule.IsWindowsAuto ? "Windows (automatic)" : "Your decision";
+    public string AppliesTo => Rule.Destination?.Label ?? (Rule.IsScoped ? "Some connections" : "Any connection");
     public string Created => Rule.Created?.ToString("g") ?? "";
     public DateTime? CreatedDate => Rule.Created;
-    public string State => Rule.Enabled ? "" : "Disabled";
+    public string State => !Rule.Enabled ? "Disabled" : Rule.IsTemporary ? "Until app quits" : "";
 }

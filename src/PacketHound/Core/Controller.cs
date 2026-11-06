@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Threading.Tasks;
 using System.Windows.Threading;
 using PacketHound.UI;
 
@@ -18,7 +19,8 @@ namespace PacketHound.Core;
 ///      attempt is written to the Security log as event 5157.
 ///   3. For each blocked outbound attempt by a program with no rule yet:
 ///        - Windows components get an Allow rule silently;
-///        - third-party apps get a prompt, and the answer becomes a permanent Allow/Block rule.
+///        - third-party apps get a prompt, and the answer becomes an Allow/Block rule, for the whole
+///          app or one IP/host/domain, kept forever or until the app quits.
 /// </summary>
 public sealed class Controller
 {
@@ -44,6 +46,9 @@ public sealed class Controller
     readonly HashSet<string> _autoAllowFailed = new(StringComparer.OrdinalIgnoreCase);
     // Apps that just got a rule: events already queued for them are stale and ignored for a moment.
     readonly Dictionary<string, DateTime> _justDecided = new(StringComparer.OrdinalIgnoreCase);
+    // Apps with "until the app quits" rules, checked every few seconds while any exist.
+    readonly HashSet<string> _temporaryApps = new(StringComparer.OrdinalIgnoreCase);
+    readonly DispatcherTimer _temporaryTimer;
     RuleSnapshot? _snapshot;
     PromptWindow? _prompt;
 
@@ -53,6 +58,8 @@ public sealed class Controller
         Settings = Settings.Load();
         Updates = new UpdateService(Settings);
         ApplyClassifierSettings();
+        _temporaryTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromSeconds(3) };
+        _temporaryTimer.Tick += (_, _) => CheckTemporaryRules();
 
         _monitor.Blocked += c => _dispatcher.InvokeAsync(() => OnBlocked(c));
         _monitor.Failed += ex => _dispatcher.InvokeAsync(() => SetError("Event monitor error: " + ex.Message, ex));
@@ -74,6 +81,7 @@ public sealed class Controller
     public void Start()
     {
         Updates.Start();
+        RemoveAllTemporaryRules("left over from the last session");
         if (!Settings.ProtectionEnabled) return;
         try
         {
@@ -91,6 +99,7 @@ public sealed class Controller
         Updates.Stop();
         _monitor.Dispose();
         ClearPending();
+        if (_temporaryApps.Count > 0) RemoveAllTemporaryRules("PacketHound is exiting");
     }
 
     // ---------------------------------------------------------------- protection on/off
@@ -222,7 +231,19 @@ public sealed class Controller
 
     // ---------------------------------------------------------------- blocked connections
 
-    void OnBlocked(BlockedConnection c)
+    async void OnBlocked(BlockedConnection c)
+    {
+        try
+        {
+            await HandleBlocked(c);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Could not handle a blocked connection from {c.AppPath}", ex);
+        }
+    }
+
+    async Task HandleBlocked(BlockedConnection c)
     {
         if (!Settings.ProtectionEnabled) return;
         if (IPAddress.TryParse(c.RemoteAddress, out var ip) && IPAddress.IsLoopback(ip)) return;
@@ -233,13 +254,43 @@ public sealed class Controller
             Log.Error("Could not map device path " + path);
             return;
         }
-        if (_justDecided.TryGetValue(path, out var decidedAt))
-        {
-            if (DateTime.UtcNow - decidedAt < TimeSpan.FromSeconds(5)) return;
-            _justDecided.Remove(path);
-        }
 
         var app = AppDetails.For(path);
+        var rules = Rules();
+
+        // A rule already covers this connection. Attempts made just before the rule existed arrive
+        // a moment later; those are stale and skipped quietly.
+        if (rules.HasDecision(path))
+        {
+            if (!RecentlyDecided(path))
+                AddActivity(c, app, rules.HasAllowRule(path) ? "Blocked by another firewall rule" : "Blocked by your rule");
+            return;
+        }
+        if (rules.DestinationRuleFor(path, c.RemoteAddress) is { } covering)
+        {
+            if (!RecentlyDecided(path))
+                AddActivity(c, app, covering.Allow ? "Blocked by another firewall rule" : $"Blocked by your rule for {covering.Destination!.Label}");
+            return;
+        }
+
+        // A host or domain rule covers this connection's name but not yet this IP: add the IP to it.
+        var nameRules = rules.NameRules(path);
+        if (nameRules.Count > 0)
+        {
+            var host = await HostNames.LookupAsync(c.RemoteAddress);
+            if (!Settings.ProtectionEnabled) return;
+            var match = host == null ? null : nameRules
+                .Where(r => r.Destination!.Matches(host))
+                .OrderBy(r => r.Destination!.Scope == RuleScope.Host ? 0 : 1) // most specific first
+                .ThenByDescending(r => r.Destination!.Target.Length)
+                .ThenBy(r => r.Allow)
+                .FirstOrDefault();
+            if (match != null)
+            {
+                ExtendRule(c, app, match, host!);
+                return;
+            }
+        }
 
         // Already on screen / in the queue: just update the details.
         if (_pending.TryGetValue(path, out var waiting))
@@ -247,13 +298,6 @@ public sealed class Controller
             waiting.Update(c);
             LookUpHostName(waiting);
             AddActivity(c, app, "Blocked · waiting for your decision");
-            return;
-        }
-
-        var rules = Rules();
-        if (rules.HasDecision(path))
-        {
-            AddActivity(c, app, rules.HasAllowRule(path) ? "Blocked by another firewall rule" : "Blocked by your rule");
             return;
         }
 
@@ -291,6 +335,59 @@ public sealed class Controller
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    bool RecentlyDecided(string path)
+    {
+        if (!_justDecided.TryGetValue(path, out var at)) return false;
+        if (DateTime.UtcNow - at < TimeSpan.FromSeconds(5)) return true;
+        _justDecided.Remove(path);
+        return false;
+    }
+
+    void ExtendRule(BlockedConnection c, AppDetails app, FirewallRuleInfo rule, string host)
+    {
+        var label = rule.Destination!.Label;
+        try
+        {
+            if (FirewallManager.AddRemoteAddresses(rule.Name, new[] { c.RemoteAddress }))
+            {
+                _justDecided[c.AppPath] = DateTime.UtcNow;
+                NotifyRulesChanged();
+            }
+            AddActivity(c, app, rule.Allow ? $"New address for {label} · allowed, the app may retry" : $"Blocked by your rule for {label}", host);
+        }
+        catch (Exception ex)
+        {
+            SetError($"Could not add {c.RemoteAddress} to the rule for {label}: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>Adds the addresses a host or domain resolves to now, so the first connections don't have to be blocked.</summary>
+    async void AddResolvedAddresses(string ruleName, RuleDestination destination, string? hostName)
+    {
+        var addresses = new List<string>();
+        foreach (var name in new[] { destination.Target, hostName }.OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var lookup = Dns.GetHostAddressesAsync(name);
+                if (await Task.WhenAny(lookup, Task.Delay(3000)) == lookup && lookup.IsCompletedSuccessfully)
+                    addresses.AddRange(lookup.Result.Select(a => a.ToString()));
+            }
+            catch
+            {
+                // Doesn't resolve; addresses get added as the app connects.
+            }
+        }
+        try
+        {
+            if (addresses.Count > 0 && FirewallManager.AddRemoteAddresses(ruleName, addresses)) NotifyRulesChanged();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Could not add resolved addresses to rule '{ruleName}'", ex);
+        }
+    }
+
     async void LookUpHostName(PendingRequest request)
     {
         var address = request.RemoteAddress;
@@ -316,14 +413,14 @@ public sealed class Controller
         prompt.Closed += (_, _) =>
         {
             _prompt = null;
-            Decide(request, prompt.Decision);
+            Decide(request, prompt.Decision, prompt.Scope, prompt.UntilQuit);
             ShowNextPrompt();
         };
         _prompt = prompt;
         prompt.Show();
     }
 
-    void Decide(PendingRequest request, PromptDecision decision)
+    void Decide(PendingRequest request, PromptDecision decision, ScopeOption? scope, bool untilQuit)
     {
         if (decision == PromptDecision.Dismiss) return;
 
@@ -335,16 +432,28 @@ public sealed class Controller
             case PromptDecision.Allow:
             case PromptDecision.Block:
                 var allow = decision == PromptDecision.Allow;
+                var destination = scope?.Destination;
                 try
                 {
-                    FirewallManager.SetAppRule(request.AppPath, request.DisplayName, allow, windowsComponent: false);
+                    if (destination == null)
+                    {
+                        FirewallManager.SetAppRule(request.AppPath, request.DisplayName, allow, windowsComponent: false, temporary: untilQuit);
+                    }
+                    else
+                    {
+                        var ruleName = FirewallManager.SetDestinationRule(request.AppPath, request.DisplayName, allow, destination,
+                            new[] { scope!.Address }, untilQuit);
+                        if (destination.Scope != RuleScope.Address) AddResolvedAddresses(ruleName, destination, scope.HostName);
+                    }
+                    if (untilQuit) TrackTemporary(request.AppPath);
                     _snoozedUntil.Remove(request.AppPath);
                     _justDecided[request.AppPath] = DateTime.UtcNow;
                     InvalidateRules();
+                    var what = destination == null ? "this app" : destination.Label;
                     AddActivity(new BlockedConnection
                     {
                         RemoteAddress = request.RemoteAddress, RemotePort = request.RemotePort, ProcessId = request.ProcessId,
-                    }, request.App, allow ? "You allowed this app" : "You blocked this app", request.HostName);
+                    }, request.App, $"You {(allow ? "allowed" : "blocked")} {what}{(untilQuit ? " until it quits" : "")}", request.HostName);
                     RulesChanged?.Invoke(this, EventArgs.Empty);
                 }
                 catch (Exception ex)
@@ -364,6 +473,53 @@ public sealed class Controller
     }
 
     public void ShowPrompt() => _prompt?.Activate();
+
+    // ---------------------------------------------------------------- "until the app quits" rules
+
+    void TrackTemporary(string path)
+    {
+        _temporaryApps.Add(path);
+        _temporaryTimer.Start();
+    }
+
+    /// <summary>Removes an app's temporary rules once no process of that program is running.</summary>
+    void CheckTemporaryRules()
+    {
+        foreach (var path in _temporaryApps.ToList())
+        {
+            try
+            {
+                if (RunningPrograms.IsRunning(path)) continue;
+                _temporaryApps.Remove(path);
+                var removed = FirewallManager.RemoveTemporaryRules(path);
+                if (removed == 0) continue;
+                Log.Info($"{path} quit: removed {removed} temporary rule(s)");
+                AddActivity(new BlockedConnection(), AppDetails.For(path), "App quit · temporary rule removed");
+                NotifyRulesChanged();
+            }
+            catch (Exception ex)
+            {
+                SetError($"Could not remove the temporary rule for {path}: {ex.Message}", ex);
+            }
+        }
+        if (_temporaryApps.Count == 0) _temporaryTimer.Stop();
+    }
+
+    /// <summary>Temporary rules can't outlive PacketHound, since nothing would be left to remove them.</summary>
+    void RemoveAllTemporaryRules(string reason)
+    {
+        try
+        {
+            var removed = FirewallManager.RemoveTemporaryRules();
+            if (removed > 0) Log.Info($"Removed {removed} temporary rule(s): {reason}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not remove temporary rules", ex);
+        }
+        _temporaryApps.Clear();
+        _temporaryTimer.Stop();
+    }
 
     void ClosePrompt()
     {

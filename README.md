@@ -18,7 +18,16 @@ PacketHound doesn't use a kernel driver. It builds on Windows Firewall:
 3. **Monitoring.** PacketHound watches for outbound 5157 events. For each program without a rule:
    - **Windows component** → an Allow rule is added silently (group *PacketHound (Windows components)*).
    - **Third-party app** → a prompt shows the app, publisher, destination hostname/IP, port and protocol.
-     **Allow** or **Block** creates a whole-app outbound rule (group *PacketHound*).
+     **Allow** or **Block** creates an outbound rule (group *PacketHound*). The rule can cover:
+     - **Any connection** (the default): the whole app.
+     - **Only this IP address.**
+     - **Only this host** (e.g. `api.example.com`), or **only this domain and its subdomains** (`*.example.com`).
+       Windows Firewall only matches IP addresses, so PacketHound keeps the rule's address list up to date:
+       when the app connects to a new address for that name, the address is added (the app may need to retry once).
+
+     The rule lasts **Forever** or **Until the app quits**. A temporary rule is removed once no process of that
+     program is running, and also when PacketHound exits.
+     Connections a destination rule doesn't cover are asked about again.
      **Decide later** keeps it blocked and asks again after 10 minutes.
 
 The rules are ordinary firewall rules (`wf.msc` › Outbound Rules). They keep working when

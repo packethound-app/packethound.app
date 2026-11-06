@@ -169,10 +169,11 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Application" Binding="{Binding AppName}" Width="220"/>
+                            <DataGridTextColumn Header="Applies to" Binding="{Binding AppliesTo}" Width="170"/>
                             <DataGridTextColumn Header="Program path" Binding="{Binding Path}" Width="*" MinWidth="240"/>
                             <DataGridTextColumn Header="Type" Binding="{Binding Kind}" Width="140"/>
                             <DataGridTextColumn Header="Created" Binding="{Binding Created}" SortMemberPath="CreatedDate" Width="130"/>
-                            <DataGridTextColumn Header="" Binding="{Binding State}" Width="70"/>
+                            <DataGridTextColumn Header="" Binding="{Binding State}" Width="110"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </DockPanel>
