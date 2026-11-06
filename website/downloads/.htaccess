@@ -1,9 +1,0 @@
-# Installers: always download, never display or run in the browser.
-Options -Indexes
-<FilesMatch "\.exe$">
-    ForceType application/octet-stream
-    <IfModule mod_headers.c>
-        Header set Content-Disposition "attachment"
-        Header set Cache-Control "public, max-age=86400"
-    </IfModule>
-</FilesMatch>

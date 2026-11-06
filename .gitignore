@@ -6,3 +6,4 @@ publish/
 website/downloads/*.exe
 website/data/*.json
 *.stackdump
+website/
