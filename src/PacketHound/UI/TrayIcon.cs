@@ -10,28 +10,39 @@ public sealed class TrayIcon : IDisposable
 {
     readonly Controller _controller;
     readonly WinForms.NotifyIcon _icon;
-    readonly WinForms.ToolStripMenuItem _toggleItem;
+    readonly WinForms.ToolStripMenuItem _pauseItem;
+    readonly WinForms.ToolStripMenuItem _resumeItem;
     readonly WinForms.ToolStripMenuItem _updateItem;
-    bool _balloonOpensDownload; // error balloons share the same click event
+    readonly WinForms.ToolStripMenuItem _deferredItem;
+    Action? _balloonClick; // what clicking the current notification does (error notifications do nothing)
     readonly Action _openMain;
+    readonly Action _openDeferred;
     readonly Action _exit;
     readonly Icon _onIcon = LoadIcon("PacketHound.ico");
     readonly Icon _pausedIcon = LoadIcon("PacketHound-paused.ico");
 
-    public TrayIcon(Controller controller, Action openMain, Action exit)
+    /// <param name="openDeferred">Opens the main window where the "decide later" apps are listed.</param>
+    public TrayIcon(Controller controller, Action openMain, Action openDeferred, Action exit)
     {
         _controller = controller;
         _openMain = openMain;
+        _openDeferred = openDeferred;
         _exit = exit;
 
         var menu = new WinForms.ContextMenuStrip();
         var open = new WinForms.ToolStripMenuItem("Open PacketHound", null, (_, _) => _openMain());
         open.Font = new Font(open.Font, FontStyle.Bold);
-        _toggleItem = new WinForms.ToolStripMenuItem("", null, (_, _) => Toggle());
+        _pauseItem = new WinForms.ToolStripMenuItem("Pause protection");
+        foreach (var (label, duration) in Controller.PauseChoices)
+            _pauseItem.DropDownItems.Add(new WinForms.ToolStripMenuItem(label, null, (_, _) => Change(() => _controller.PauseProtection(duration))));
+        _resumeItem = new WinForms.ToolStripMenuItem("Turn protection on", null, (_, _) => Change(_controller.EnableProtection));
         _updateItem = new WinForms.ToolStripMenuItem("", null, (_, _) => OpenDownloadPage()) { Visible = false };
+        _deferredItem = new WinForms.ToolStripMenuItem("", null, (_, _) => _openDeferred()) { Visible = false };
         menu.Items.Add(open);
+        menu.Items.Add(_deferredItem);
         menu.Items.Add(_updateItem);
-        menu.Items.Add(_toggleItem);
+        menu.Items.Add(_pauseItem);
+        menu.Items.Add(_resumeItem);
         menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add(new WinForms.ToolStripMenuItem("Exit", null, (_, _) => _exit()));
 
@@ -40,6 +51,7 @@ public sealed class TrayIcon : IDisposable
         {
             if (e.Button != WinForms.MouseButtons.Left) return;
             if (_controller.PendingCount > 0) _controller.ShowPrompt();
+            else if (_controller.Deferred.Count > 0) _openDeferred();
             else _openMain();
         };
 
@@ -47,12 +59,20 @@ public sealed class TrayIcon : IDisposable
         controller.Updates.Changed += (_, _) => Update();
         controller.Updates.Announce += (_, update) =>
         {
-            _balloonOpensDownload = true;
+            _balloonClick = OpenDownloadPage;
             _icon.ShowBalloonTip(10000, $"PacketHound {update.Version} is available",
                 "Click here to open the download page.", WinForms.ToolTipIcon.Info);
         };
-        _icon.BalloonTipClicked += (_, _) => { if (_balloonOpensDownload) OpenDownloadPage(); };
-        _icon.BalloonTipClosed += (_, _) => _balloonOpensDownload = false;
+        // An installer usually gives up after its first (blocked) attempt; offer the pause it needs.
+        controller.InstallerAllowed += (_, name) =>
+        {
+            _balloonClick = () => Change(() => _controller.PauseProtection(TimeSpan.FromMinutes(5)));
+            _icon.ShowBalloonTip(15000, $"{name} is allowed",
+                "If the installer says it failed, click here to pause protection for 5 minutes, then run it again.",
+                WinForms.ToolTipIcon.Info);
+        };
+        _icon.BalloonTipClicked += (_, _) => { var click = _balloonClick; _balloonClick = null; click?.Invoke(); };
+        _icon.BalloonTipClosed += (_, _) => _balloonClick = null;
         Update();
     }
 
@@ -62,16 +82,16 @@ public sealed class TrayIcon : IDisposable
         catch (Exception ex) { Log.Error("Could not open the download page", ex); }
     }
 
-    void Toggle()
+    void Change(Action change)
     {
         try
         {
-            if (_controller.ProtectionEnabled) _controller.PauseProtection();
-            else _controller.EnableProtection();
+            change();
         }
         catch (Exception ex)
         {
-            Log.Error("Toggle from tray failed", ex);
+            Log.Error("Changing protection from the tray failed", ex);
+            _balloonClick = null;
             _icon.ShowBalloonTip(5000, "PacketHound", ex.Message, WinForms.ToolTipIcon.Error);
         }
     }
@@ -80,10 +100,16 @@ public sealed class TrayIcon : IDisposable
     {
         var on = _controller.ProtectionEnabled;
         _icon.Icon = on ? _onIcon : _pausedIcon;
-        var text = on ? "PacketHound · protection on" : "PacketHound · paused";
-        if (_controller.PendingCount > 0) text += $" · {_controller.PendingCount} waiting";
+        var text = on ? "PacketHound · protection on"
+            : _controller.PausedUntil is { } until ? $"PacketHound · paused until {until:t}" : "PacketHound · paused";
+        var waiting = _controller.PendingCount + _controller.Deferred.Count;
+        if (waiting > 0) text += $" · {waiting} waiting";
         _icon.Text = text.Length > 63 ? text[..63] : text;
-        _toggleItem.Text = on ? "Pause protection" : "Turn protection on";
+        var deferred = _controller.Deferred.Count;
+        _deferredItem.Visible = deferred > 0;
+        _deferredItem.Text = deferred == 1 ? "1 app waiting for your decision…" : $"{deferred} apps waiting for your decision…";
+        _pauseItem.Visible = on;
+        _resumeItem.Visible = !on;
         var update = _controller.Updates.Available;
         _updateItem.Visible = update != null;
         if (update != null) _updateItem.Text = $"Download PacketHound {update.Version}…";

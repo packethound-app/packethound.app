@@ -45,6 +45,15 @@ public sealed class Settings
     /// <summary>How each list in the main window is sorted, by list name ("Rules", "Activity").</summary>
     public Dictionary<string, SortSetting> GridSorts { get; set; } = new();
 
+    /// <summary>Main window size and position when it was last closed (null: default size, centered).</summary>
+    public WindowPlacement? MainWindowPlacement { get; set; }
+
+    /// <summary>When a timed pause ends and protection turns back on by itself (null: not a timed pause).</summary>
+    public DateTime? PausedUntil { get; set; }
+
+    /// <summary>Decisions that apply to any copy of a program with the same file name and signer.</summary>
+    public List<SignedCopyRule> SignedCopyRules { get; set; } = new();
+
     public static Settings Load()
     {
         try
@@ -70,6 +79,31 @@ public sealed class Settings
 
 /// <summary>A list's sort: the row property it's sorted by and the direction.</summary>
 public sealed record SortSetting(string Member, bool Descending);
+
+/// <summary>
+/// "Allow (or block) any copy of FileName signed by Signer", wherever it runs from. Windows Firewall can
+/// only match paths, so PacketHound turns a match into a rule for that copy's path when it first connects.
+/// </summary>
+public sealed class SignedCopyRule
+{
+    public string FileName { get; set; } = "";
+    /// <summary>Verified Authenticode signer (certificate common name).</summary>
+    public string Signer { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public bool Allow { get; set; }
+    public DateTime Created { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string Key => $"{FileName}|{Signer}".ToLowerInvariant();
+
+    public bool Matches(string path, string? signer) =>
+        signer != null
+        && string.Equals(Path.GetFileName(path), FileName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(signer, Signer, StringComparison.Ordinal);
+}
+
+/// <summary>A window's normal (not maximized) bounds in device-independent pixels, and whether it was maximized.</summary>
+public sealed record WindowPlacement(double Left, double Top, double Width, double Height, bool Maximized);
 
 public static class Log
 {

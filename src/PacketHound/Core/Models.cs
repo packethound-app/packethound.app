@@ -35,7 +35,22 @@ public sealed class PendingRequest : INotifyPropertyChanged
         App = app;
         FirstSeen = first.Time;
         ProcessName = TryGetProcessName(first.ProcessId);
+        InTempFolder = TempFolders.Contains(app.Path);
         Update(first);
+    }
+
+    /// <summary>Runs from a temporary folder: probably an installer or updater that unpacks to a new folder each time.</summary>
+    public bool InTempFolder { get; }
+
+    public string FileName => System.IO.Path.GetFileName(AppPath);
+
+    /// <summary>Verified Authenticode signer, filled in shortly after the request is created (null: unsigned or not checked yet).</summary>
+    public string? Signer { get; private set; }
+
+    public void SetSigner(string? signer)
+    {
+        Signer = signer;
+        Changed();
     }
 
     public AppDetails App { get; }
@@ -67,6 +82,21 @@ public sealed class PendingRequest : INotifyPropertyChanged
 
     public string ProcessText => ProcessName != null ? $"{ProcessName}.exe (PID {ProcessId})" : $"PID {ProcessId}";
     public string AttemptsText => Attempts == 1 ? "1 attempt blocked so far" : $"{Attempts} attempts blocked so far";
+
+    DateTime? _snoozedUntil;
+
+    /// <summary>After "Decide later": when to ask again. Null once that time has passed (or while in the prompt queue).</summary>
+    public DateTime? SnoozedUntil
+    {
+        get => _snoozedUntil;
+        set { _snoozedUntil = value; Changed(); }
+    }
+
+    public bool IsSnoozed => SnoozedUntil > DateTime.Now;
+
+    public string DeferredText => SnoozedUntil is { } until
+        ? $"Asks again at {until:t} if it's running"
+        : "Asks again when it next connects";
 
     public void Update(BlockedConnection c)
     {
@@ -120,17 +150,36 @@ public sealed class ActivityEntry : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 }
 
+/// <summary>A row in the Rules list: a Windows Firewall rule, or a signed-copy rule kept in PacketHound's settings.</summary>
 public sealed class RuleRow
 {
-    public required FirewallRuleInfo Rule { get; init; }
-    public string Name => Rule.Name;
-    public string AppName => Rule.DisplayName;
-    public string Path => Rule.ApplicationName;
-    public string Action => Rule.Allow ? "Allow" : "Block";
-    public bool IsAllow => Rule.Allow;
-    public string Kind => Rule.IsWindowsAuto ? "Windows (automatic)" : "Your decision";
-    public string AppliesTo => Rule.Destination?.Label ?? (Rule.IsScoped ? "Some connections" : "Any connection");
-    public string Created => Rule.Created?.ToString("g") ?? "";
-    public DateTime? CreatedDate => Rule.Created;
-    public string State => !Rule.Enabled ? "Disabled" : Rule.IsTemporary ? "Until app quits" : "";
+    public FirewallRuleInfo? Rule { get; init; }
+    public SignedCopyRule? SignedCopy { get; init; }
+    public ProgramState Program { get; init; }
+    public bool IsMissing => Program == ProgramState.Missing;
+    public bool IsWindowsAuto => Rule?.IsWindowsAuto == true;
+    public string Name => Rule?.Name ?? "signed:" + SignedCopy!.Key;
+    public string AppName => Rule?.DisplayName ?? SignedCopy!.DisplayName;
+    public string Path => Rule?.ApplicationName ?? $"Any copy of {SignedCopy!.FileName} ({SignedCopy.Signer})";
+    public bool IsAllow => Rule?.Allow ?? SignedCopy!.Allow;
+    public string Action => IsAllow ? "Allow" : "Block";
+    public string Kind => SignedCopy != null ? "Installer / updater" :Rule!.IsWindowsAuto ? "Windows (automatic)" : "Your decision";
+    public string AppliesTo => Rule == null ? "Any connection"
+        : Rule.Destination?.Label ?? (Rule.IsScoped ? "Some connections" : "Any connection");
+    public DateTime? CreatedDate => Rule?.Created ?? SignedCopy!.Created;
+    public string Created => CreatedDate?.ToString("g") ?? "";
+    public string State =>
+        Rule == null ? ""
+        : IsMissing ? "Program not found"
+        : Program == ProgramState.DriveUnavailable ? "Drive not connected"
+        : !Rule.Enabled ? "Disabled"
+        : Rule.IsTemporary ? "Until app quits" : "";
+
+    public string? StateTip => Program switch
+    {
+        ProgramState.Missing => "This program is no longer on this PC, so the rule does nothing. Use “Remove missing” to delete it.",
+        ProgramState.DriveUnavailable => "The drive this program is on isn't connected right now.",
+        _ when SignedCopy != null => "This installer or updater runs from a new temporary folder each time. Your answer applies to every copy with the same file name and a valid signature from the same publisher.",
+        _ => null,
+    };
 }

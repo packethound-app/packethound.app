@@ -20,7 +20,15 @@ public partial class PromptWindow : Window
         _request = request;
         DataContext = request;
         UntilQuitItem.Content = $"Until {request.DisplayName} quits";
+        if (request.InTempFolder)
+        {
+            // A copy in a temp folder is gone after this run, so its rule always lasts until it quits.
+            TempNote.Visibility = Visibility.Visible;
+            DurationBox.SelectedItem = UntilQuitItem;
+            DurationBox.Visibility = DurationLabel.Visibility = Visibility.Collapsed;
+        }
         BuildScopeOptions();
+        UpdateTempNote();
         request.PropertyChanged += OnRequestChanged;
         Closed += (_, _) => request.PropertyChanged -= OnRequestChanged;
         // Not activated on purpose: a prompt popping up mid-typing must not swallow keystrokes.
@@ -45,7 +53,24 @@ public partial class PromptWindow : Window
     /// <summary>The rule should be removed when the app quits.</summary>
     public bool UntilQuit { get; private set; }
 
-    void OnRequestChanged(object? sender, PropertyChangedEventArgs e) => BuildScopeOptions();
+    void OnRequestChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        BuildScopeOptions();
+        UpdateTempNote();
+    }
+
+    /// <summary>
+    /// For installers and updaters in a temp folder. A signed one (checked in the background, so this can
+    /// change a moment after the prompt opens) has its answer remembered for future copies whenever the
+    /// rule covers any connection.
+    /// </summary>
+    void UpdateTempNote()
+    {
+        if (!_request.InTempFolder) return;
+        var remembered = _request.Signer != null && (ScopeBox.SelectedItem as ScopeOption)?.Destination == null;
+        TempText.Text = "This looks like an installer or updater."
+                        + (remembered ? " PacketHound will remember your answer the next time it runs." : "");
+    }
 
     /// <summary>
     /// Fills "Applies to" from the current destination. Rebuilt when the destination or its host name
@@ -76,7 +101,8 @@ public partial class PromptWindow : Window
 
     void Options_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (NoteText == null || ScopeBox == null || DurationBox == null) return; // still loading
+        if (NoteText == null || ScopeBox == null || DurationBox == null || TempText == null) return; // still loading
+        UpdateTempNote();
 
         var text = (ScopeBox.SelectedItem as ScopeOption)?.Destination switch
         {
@@ -85,7 +111,7 @@ public partial class PromptWindow : Window
             _ => "Windows Firewall only matches IP addresses, so PacketHound adds this name's addresses to the rule "
                  + "as the program connects to them. Connections anywhere else will ask again.",
         };
-        if (DurationBox.SelectedItem == UntilQuitItem)
+        if (DurationBox.SelectedItem == UntilQuitItem && !_request.InTempFolder)
             text += $" The rule is removed when {_request.DisplayName} quits, or when PacketHound exits.";
         NoteText.Text = text + " If you allow it, the program may need to retry.";
     }

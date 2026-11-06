@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -25,6 +27,9 @@ public partial class MainWindow : Window
         InitializeComponent();
         Title = $"PacketHound v{UpdateService.CurrentVersion}";
         _controller = controller;
+        RestorePlacement();
+        StateChanged += (_, _) => { if (WindowState != WindowState.Minimized) _maximized = WindowState == WindowState.Maximized; };
+        Closing += (_, _) => SavePlacement();
 
         var cellText = (Style)FindResource("CellText");
         foreach (var column in RulesGrid.Columns.Concat(ActivityGrid.Columns).OfType<DataGridTextColumn>())
@@ -34,6 +39,7 @@ public partial class MainWindow : Window
         _activitySort = new GridSorting(ActivityGrid, controller.Settings, "Activity", new SortSetting("Time", Descending: true));
         ActivityGrid.ItemsSource = controller.Activity;
         _activitySort.Apply();
+        DeferredList.ItemsSource = controller.Deferred;
 
         _copiedTimer.Tick += (_, _) => { _copiedTimer.Stop(); CopiedText.Visibility = Visibility.Collapsed; };
 
@@ -61,6 +67,46 @@ public partial class MainWindow : Window
         LoadRules();
     }
 
+    // ---------------------------------------------------------------- window size and position
+
+    // Maximized the last time it wasn't minimized, so closing while minimized remembers it.
+    bool _maximized;
+
+    void RestorePlacement()
+    {
+        if (_controller.Settings.MainWindowPlacement is not { } p) return;
+        Width = Math.Max(MinWidth, p.Width);
+        Height = Math.Max(MinHeight, p.Height);
+
+        // Only reuse the position if the title bar would be on screen (a monitor may have been unplugged).
+        var screen = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
+        var titleBar = new Rect(p.Left + 40, p.Top, Math.Max(0, Width - 80), 30);
+        if (screen.IntersectsWith(titleBar))
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = p.Left;
+            Top = p.Top;
+        }
+        if (p.Maximized) WindowState = WindowState.Maximized;
+        _maximized = p.Maximized;
+    }
+
+    void SavePlacement()
+    {
+        var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, ActualWidth, ActualHeight) : RestoreBounds;
+        if (bounds.IsEmpty || bounds.Width <= 0 || bounds.Height <= 0) return;
+        _controller.Settings.MainWindowPlacement = new WindowPlacement(bounds.Left, bounds.Top, bounds.Width, bounds.Height, _maximized);
+        try
+        {
+            _controller.Settings.Save();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not save the window size", ex);
+        }
+    }
+
     void OnStateChanged(object? s, EventArgs e) => UpdateStatus();
     void OnRulesChanged(object? s, EventArgs e) => LoadRules();
 
@@ -69,12 +115,14 @@ public partial class MainWindow : Window
     void UpdateStatus()
     {
         var on = _controller.ProtectionEnabled;
+        var until = _controller.PausedUntil;
         StatusDot.Fill = (System.Windows.Media.Brush)FindResource(on ? "Success" : "Warning");
-        StatusTitle.Text = on ? "Protection is on" : "Protection is paused";
+        StatusTitle.Text = on ? "Protection is on" : until is { } t ? $"Protection is paused until {t:t}" : "Protection is paused";
         StatusDetail.Text = on
             ? "Apps you haven't decided about yet are blocked, and PacketHound asks you about them. Windows itself is allowed automatically."
-            : "Apps without a rule can connect freely. Your Block rules still apply.";
-        ToggleButton.Content = on ? "Pause protection" : "Turn protection on";
+            : "Apps without a rule can connect freely. Your Block rules still apply."
+              + (until != null ? " Protection turns back on by itself." : "");
+        ToggleButton.Content = on ? "Pause protection ▾" : "Turn protection on";
         ToggleButton.Style = (Style)FindResource(on ? "BaseButton" : "PrimaryButton");
 
         var disabled = _controller.DisabledFirewallProfiles();
@@ -89,6 +137,11 @@ public partial class MainWindow : Window
         PendingRun.Text = pending == 1 ? "1 app is waiting for your decision" : $"{pending} apps are waiting for your decision";
         PendingText.Visibility = pending > 0 ? Visibility.Visible : Visibility.Collapsed;
 
+        var deferred = _controller.Deferred.Count;
+        DeferredRun.Text = deferred == 1 ? "1 app you chose to decide later" : $"{deferred} apps you chose to decide later";
+        DeferredText.Visibility = deferred > 0 ? Visibility.Visible : Visibility.Collapsed;
+        DeferredPanel.Visibility = DeferredText.Visibility;
+
         try
         {
             FirewallInfo.Text = string.Join("    ", FirewallManager.Profiles.Select(p =>
@@ -102,13 +155,28 @@ public partial class MainWindow : Window
 
     void Toggle_Click(object sender, RoutedEventArgs e)
     {
+        if (!_controller.ProtectionEnabled)
+        {
+            ChangeProtection(() => _controller.EnableProtection());
+            return;
+        }
+
+        // Pausing: pick how long.
+        var menu = new ContextMenu { PlacementTarget = ToggleButton, Placement = PlacementMode.Bottom };
+        foreach (var (label, duration) in Controller.PauseChoices)
+        {
+            var item = new MenuItem { Header = label };
+            item.Click += (_, _) => ChangeProtection(() => _controller.PauseProtection(duration));
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
+    }
+
+    void ChangeProtection(Action change)
+    {
         try
         {
-            using (new WaitCursor())
-            {
-                if (_controller.ProtectionEnabled) _controller.PauseProtection();
-                else _controller.EnableProtection();
-            }
+            using (new WaitCursor()) change();
         }
         catch (Exception ex)
         {
@@ -119,6 +187,16 @@ public partial class MainWindow : Window
     }
 
     void ShowPrompt_Click(object sender, RoutedEventArgs e) => _controller.ShowPrompt();
+    void ShowDeferred_Click(object sender, RoutedEventArgs e) => ShowDeferred();
+
+    /// <summary>Switches to the Rules tab, where the "decide later" apps are listed.</summary>
+    public void ShowDeferred() => Tabs.SelectedItem = RulesTab;
+
+    void DecideNow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: PendingRequest request })
+            _controller.DecideNow(request.AppPath);
+    }
 
     // ---------------------------------------------------------------- rules
 
@@ -127,13 +205,21 @@ public partial class MainWindow : Window
         try
         {
             var selected = RulesGrid.SelectedItems.Cast<RuleRow>().Select(r => r.Name).ToHashSet();
-            var rows = FirewallManager.GetPacketHoundRules().Select(r => new RuleRow { Rule = r }).ToList();
+            var programs = new Dictionary<string, ProgramState>(StringComparer.OrdinalIgnoreCase);
+            var rows = FirewallManager.GetPacketHoundRules().Select(r => new RuleRow
+            {
+                Rule = r,
+                Program = programs.TryGetValue(r.ApplicationName, out var state)
+                    ? state : programs[r.ApplicationName] = ProgramPresence.Check(r.ApplicationName),
+            }).ToList();
+            rows.AddRange(_controller.SignedCopyRules.Select(s => new RuleRow { SignedCopy = s }));
             RulesGrid.ItemsSource = rows;
             _rulesView = CollectionViewSource.GetDefaultView(rows);
             _rulesView.Filter = FilterRule;
             _rulesSort.Apply();
             foreach (var row in rows.Where(r => selected.Contains(r.Name)))
                 RulesGrid.SelectedItems.Add(row);
+            UpdateRemoveMissing();
         }
         catch (Exception ex)
         {
@@ -144,7 +230,7 @@ public partial class MainWindow : Window
     bool FilterRule(object o)
     {
         var row = (RuleRow)o;
-        if (row.Rule.IsWindowsAuto && ShowWindowsRules.IsChecked != true) return false;
+        if (row.IsWindowsAuto && ShowWindowsRules.IsChecked != true) return false;
         var q = SearchBox.Text.Trim();
         return q.Length == 0
                || row.AppName.Contains(q, StringComparison.CurrentCultureIgnoreCase)
@@ -152,8 +238,45 @@ public partial class MainWindow : Window
                || row.AppliesTo.Contains(q, StringComparison.CurrentCultureIgnoreCase);
     }
 
-    void Search_TextChanged(object sender, TextChangedEventArgs e) => _rulesView?.Refresh();
-    void Filter_Changed(object sender, RoutedEventArgs e) => _rulesView?.Refresh();
+    void Search_TextChanged(object sender, TextChangedEventArgs e) => RefreshRulesView();
+    void Filter_Changed(object sender, RoutedEventArgs e) => RefreshRulesView();
+
+    void RefreshRulesView()
+    {
+        _rulesView?.Refresh();
+        UpdateRemoveMissing();
+    }
+
+    /// <summary>Rules on screen (after search and filter) whose program is gone.</summary>
+    List<RuleRow> VisibleMissingRules() =>
+        _rulesView?.Cast<RuleRow>().Where(r => r.IsMissing).ToList() ?? new List<RuleRow>();
+
+    void UpdateRemoveMissing()
+    {
+        var count = VisibleMissingRules().Count;
+        RemoveMissingButton.Content = $"Remove missing ({count})";
+        RemoveMissingButton.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    void RemoveMissing_Click(object sender, RoutedEventArgs e)
+    {
+        var rows = VisibleMissingRules();
+        if (rows.Count == 0) return;
+        const int listed = 10;
+        var list = string.Join("\n", rows.Take(listed).Select(r => $"•  {r.AppName}  ({r.Path})"));
+        if (rows.Count > listed) list += $"\n…and {rows.Count - listed} more";
+        var what = rows.Count == 1 ? "the rule for a program that is" : $"{rows.Count} rules for programs that are";
+        if (MessageBox.Show(this, $"Delete {what} no longer on this PC?\n\n{list}\n\nIf you reinstall one, PacketHound will ask about it again.",
+                "Remove missing programs", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        try
+        {
+            _controller.RemoveMissingProgramRules(rows.Select(r => r.Rule).OfType<FirewallRuleInfo>());
+        }
+        catch (Exception ex)
+        {
+            ShowError("Could not delete all of the rules", ex);
+        }
+    }
     void Refresh_Click(object sender, RoutedEventArgs e) { _controller.InvalidateRules(); LoadRules(); UpdateStatus(); }
 
     void Allow_Click(object sender, RoutedEventArgs e) => ChangeSelected(allow: true);
@@ -173,7 +296,7 @@ public partial class MainWindow : Window
         if (sender is not CheckBox { DataContext: RuleRow row } box) return;
         try
         {
-            FirewallManager.ChangeRuleAction(row.Name, allow: box.IsChecked == true);
+            SetAction(row, allow: box.IsChecked == true);
         }
         catch (Exception ex)
         {
@@ -188,13 +311,19 @@ public partial class MainWindow : Window
         if (rows.Count == 0) return;
         try
         {
-            foreach (var row in rows) FirewallManager.ChangeRuleAction(row.Name, allow);
+            foreach (var row in rows) SetAction(row, allow);
         }
         catch (Exception ex)
         {
             ShowError("Could not change the rule", ex);
         }
         _controller.NotifyRulesChanged();
+    }
+
+    void SetAction(RuleRow row, bool allow)
+    {
+        if (row.SignedCopy != null) _controller.SetSignedCopyAction(row.SignedCopy.Key, allow);
+        else FirewallManager.ChangeRuleAction(row.Name, allow);
     }
 
     void Delete_Click(object sender, RoutedEventArgs e)
@@ -206,7 +335,11 @@ public partial class MainWindow : Window
                 "Delete rules", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         try
         {
-            foreach (var row in rows) FirewallManager.RemoveRule(row.Name);
+            foreach (var row in rows)
+            {
+                if (row.SignedCopy != null) _controller.RemoveSignedCopyRule(row.SignedCopy.Key);
+                else FirewallManager.RemoveRule(row.Name);
+            }
         }
         catch (Exception ex)
         {
@@ -219,7 +352,39 @@ public partial class MainWindow : Window
 
     void ActivityGrid_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (FindAncestor<DataGridRow>(e.OriginalSource)?.Item is not ActivityEntry entry || entry.RemoteAddress.Length == 0) return;
+        if (FindAncestor<DataGridRow>(e.OriginalSource)?.Item is ActivityEntry entry) CopyAddress(entry);
+    }
+
+    void ActivityGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        // Act on the row under the mouse; no menu outside the rows.
+        if (FindAncestor<DataGridRow>(e.OriginalSource) is not { Item: ActivityEntry entry } row)
+        {
+            e.Handled = true;
+            return;
+        }
+        if (!row.IsSelected)
+        {
+            ActivityGrid.SelectedItems.Clear();
+            row.IsSelected = true;
+        }
+        DecideNowItem.IsEnabled = _controller.IsUndecided(entry.AppPath);
+        CopyAddressItem.IsEnabled = entry.RemoteAddress.Length > 0;
+    }
+
+    void ActivityDecideNow_Click(object sender, RoutedEventArgs e)
+    {
+        if (ActivityGrid.SelectedItem is ActivityEntry entry) _controller.DecideNow(entry.AppPath);
+    }
+
+    void ActivityCopy_Click(object sender, RoutedEventArgs e)
+    {
+        if (ActivityGrid.SelectedItem is ActivityEntry entry) CopyAddress(entry);
+    }
+
+    void CopyAddress(ActivityEntry entry)
+    {
+        if (entry.RemoteAddress.Length == 0) return;
         try
         {
             Clipboard.SetText(entry.RemoteAddress);

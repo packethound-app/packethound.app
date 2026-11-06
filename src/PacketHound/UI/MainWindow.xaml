@@ -116,9 +116,14 @@
                     <TextBlock x:Name="StatusTitle" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
                     <TextBlock x:Name="StatusDetail" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,16,0"/>
                     <TextBlock x:Name="ErrorText" Foreground="{StaticResource Danger}" TextWrapping="Wrap" Margin="0,4,16,0" Visibility="Collapsed"/>
-                    <TextBlock x:Name="PendingText" Margin="0,4,0,0" Visibility="Collapsed">
-                        <Hyperlink Click="ShowPrompt_Click"><Run x:Name="PendingRun"/></Hyperlink>
-                    </TextBlock>
+                    <WrapPanel>
+                        <TextBlock x:Name="PendingText" Margin="0,4,16,0" Visibility="Collapsed">
+                            <Hyperlink Click="ShowPrompt_Click"><Run x:Name="PendingRun"/></Hyperlink>
+                        </TextBlock>
+                        <TextBlock x:Name="DeferredText" Margin="0,4,16,0" Visibility="Collapsed">
+                            <Hyperlink Click="ShowDeferred_Click"><Run x:Name="DeferredRun"/></Hyperlink>
+                        </TextBlock>
+                    </WrapPanel>
                     <TextBlock x:Name="UpdateBanner" Margin="0,4,0,0" Visibility="Collapsed">
                         <Run x:Name="UpdateBannerRun"/>
                         <Hyperlink Click="DownloadUpdate_Click">Open the download page</Hyperlink>
@@ -127,9 +132,9 @@
             </DockPanel>
         </Border>
 
-        <TabControl Margin="12" BorderBrush="{StaticResource Line}">
+        <TabControl x:Name="Tabs" Margin="12" BorderBrush="{StaticResource Line}">
             <!-- Rules -->
-            <TabItem Header="Rules">
+            <TabItem x:Name="RulesTab" Header="Rules">
                 <DockPanel Margin="10">
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10" LastChildFill="False">
                         <TextBlock DockPanel.Dock="Left" Text="Search" VerticalAlignment="Center" Foreground="{StaticResource Muted}" Margin="0,0,8,0"/>
@@ -140,10 +145,69 @@
                         <Button DockPanel.Dock="Right" Content="Delete" Margin="0,0,8,0" Click="Delete_Click"/>
                         <Button DockPanel.Dock="Right" Content="Block" Margin="0,0,8,0" Click="Block_Click"/>
                         <Button DockPanel.Dock="Right" Content="Allow" Margin="0,0,8,0" Click="Allow_Click"/>
+                        <Button x:Name="RemoveMissingButton" DockPanel.Dock="Right" Margin="0,0,8,0" Click="RemoveMissing_Click"
+                                Visibility="Collapsed" ToolTip="Delete the rules for programs that are no longer on this PC."/>
                     </DockPanel>
+
+                    <!-- Apps the user chose to decide later about -->
+                    <Border x:Name="DeferredPanel" DockPanel.Dock="Top" Margin="0,0,0,10" Padding="14,10" CornerRadius="6"
+                            Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" Visibility="Collapsed">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                                <TextBlock Text="Waiting for your decision" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                <TextBlock Text="You chose to decide later about these apps. They're blocked until you decide."
+                                           Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto">
+                                <ItemsControl x:Name="DeferredList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border BorderBrush="#FDE68A" BorderThickness="0,1,0,0" Padding="0,6">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="2*"/>
+                                                        <ColumnDefinition Width="3*"/>
+                                                        <ColumnDefinition Width="2*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Image Source="{Binding Icon}" Width="20" Height="20" Margin="0,0,10,0" VerticalAlignment="Center"
+                                                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                                                    <StackPanel Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center" ToolTip="{Binding AppPath}">
+                                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Publisher}" Foreground="{StaticResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="2" Margin="0,0,12,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding DestinationTitle}" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding DestinationDetail}" Foreground="{StaticResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="3" Margin="0,0,12,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding DeferredText}" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding AttemptsText}" Foreground="{StaticResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="4" Content="Decide…" Style="{StaticResource PrimaryButton}" VerticalAlignment="Center"
+                                                            Click="DecideNow_Click"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
                     <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" Foreground="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap"
                                Text="These are ordinary Windows Firewall outbound rules (wf.msc › Outbound Rules, group “PacketHound”). Deleting a rule means PacketHound will ask about that app again."/>
                     <DataGrid x:Name="RulesGrid">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Style.Triggers>
+                                    <!-- Rules whose program is gone: a light red tint (selection still shows over it). -->
+                                    <DataTrigger Binding="{Binding IsMissing}" Value="True">
+                                        <Setter Property="Background" Value="#FEF2F2"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
                         <DataGrid.Columns>
                             <DataGridTemplateColumn Header="Action" Width="110" SortMemberPath="Action">
                                 <DataGridTemplateColumn.CellTemplate>
@@ -173,7 +237,13 @@
                             <DataGridTextColumn Header="Program path" Binding="{Binding Path}" Width="*" MinWidth="240"/>
                             <DataGridTextColumn Header="Type" Binding="{Binding Kind}" Width="140"/>
                             <DataGridTextColumn Header="Created" Binding="{Binding Created}" SortMemberPath="CreatedDate" Width="130"/>
-                            <DataGridTextColumn Header="" Binding="{Binding State}" Width="110"/>
+                            <DataGridTextColumn Header="Status" Binding="{Binding State}" Width="140">
+                                <DataGridTextColumn.CellStyle>
+                                    <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                        <Setter Property="ToolTip" Value="{Binding StateTip}"/>
+                                    </Style>
+                                </DataGridTextColumn.CellStyle>
+                            </DataGridTextColumn>
                         </DataGrid.Columns>
                     </DataGrid>
                 </DockPanel>
@@ -184,12 +254,18 @@
                 <DockPanel Margin="10">
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10" LastChildFill="False">
                         <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="{StaticResource Muted}"
-                                   Text="Outgoing connections the firewall blocked since PacketHound started, and what happened next. Double-click a row to copy its IP address."/>
+                                   Text="Outgoing connections the firewall blocked since PacketHound started, and what happened next. Double-click a row to copy its IP address; right-click for more."/>
                         <Button DockPanel.Dock="Right" Content="Clear" Click="ClearActivity_Click"/>
                         <TextBlock x:Name="CopiedText" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0"
                                    Foreground="{StaticResource Success}" Visibility="Collapsed"/>
                     </DockPanel>
-                    <DataGrid x:Name="ActivityGrid" MouseDoubleClick="ActivityGrid_DoubleClick">
+                    <DataGrid x:Name="ActivityGrid" MouseDoubleClick="ActivityGrid_DoubleClick" ContextMenuOpening="ActivityGrid_ContextMenuOpening">
+                        <DataGrid.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem x:Name="DecideNowItem" Header="Decide now…" Click="ActivityDecideNow_Click"/>
+                                <MenuItem x:Name="CopyAddressItem" Header="Copy IP address" Click="ActivityCopy_Click"/>
+                            </ContextMenu>
+                        </DataGrid.ContextMenu>
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Time" Binding="{Binding Time, StringFormat=HH:mm:ss}" Width="80"/>
                             <DataGridTextColumn Header="Application" Binding="{Binding AppName}" Width="200"/>

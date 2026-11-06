@@ -155,10 +155,11 @@ public static class FirewallManager
     /// Creates (or replaces) the whole-app PacketHound rule for an application. Any destination rules
     /// the app had are removed too, since this decision covers every connection.
     /// </summary>
-    public static void SetAppRule(string appPath, string displayName, bool allow, bool windowsComponent, bool temporary = false)
+    public static void SetAppRule(string appPath, string displayName, bool allow, bool windowsComponent, bool temporary = false,
+        string? note = null)
     {
         RemovePacketHoundRulesFor(appPath);
-        var note = windowsComponent ? " (Windows component, allowed automatically)" : "";
+        note = windowsComponent ? " (Windows component, allowed automatically)" : note ?? "";
         AddRule(BuildRuleName(displayName, appPath), appPath, allow, windowsComponent ? WindowsGroup : UserGroup,
             Describe(note, null, temporary), remoteAddresses: null);
         Log.Info($"{(allow ? "Allow" : "Block")} rule created for {appPath}{(windowsComponent ? " (Windows)" : "")}{(temporary ? " until it quits" : "")}");

@@ -28,10 +28,31 @@ PacketHound doesn't use a kernel driver. It builds on Windows Firewall:
      The rule lasts **Forever** or **Until the app quits**. A temporary rule is removed once no process of that
      program is running, and also when PacketHound exits.
      Connections a destination rule doesn't cover are asked about again.
-     **Decide later** keeps it blocked and asks again after 10 minutes.
+     **Decide later** keeps it blocked and lists it under *Waiting for your decision* on the Rules tab,
+     where you can decide any time. After 10 minutes PacketHound asks again if the app is still running,
+     or otherwise the next time it connects.
+
+     **Installers and updaters in temporary folders.** Many unpack themselves into a new random folder under
+     `%TEMP%` on every run, so a rule for one copy's path never matches the next. For a program running from a
+     temp folder the prompt says *"This looks like an installer or updater"*, and its rule lasts until it quits,
+     so dead rules don't pile up. If it's validly signed, the answer is remembered: future copies with the same
+     file name *and* a valid signature from the same signer get it without a prompt (listed on the Rules tab as
+     *Installer / updater*). Windows Firewall can only match paths, so PacketHound watches the temp folders: when
+     a remembered program is unpacked there, its signature is checked and its rule is made before it runs.
+     If PacketHound is too late (or it's the very first run, before you've answered), the first connection is
+     blocked and many installers give up, so a notification offers to pause protection for 5 minutes in one click.
+
+4. **Pausing.** Protection can be paused for 5 minutes, 15 minutes, 1 hour, or until you turn it back on
+   (tray icon › Pause protection, or the button in the main window). A timed pause turns protection back on
+   by itself, also if the PC restarts in the meantime. While paused, apps without a rule can connect; your
+   Block rules still apply.
 
 The rules are ordinary firewall rules (`wf.msc` › Outbound Rules). They keep working when
 PacketHound isn't running, or after it's uninstalled.
+
+Rules for programs that are no longer on the PC (uninstalled, or replaced by an update that installs
+into a new versioned folder) show **Program not found** on the Rules tab. **Remove missing** deletes them
+after you confirm. Programs on a drive that isn't connected, or on a network share, are never counted as missing.
 
 ### What counts as "Windows"
 
@@ -80,12 +101,20 @@ Code signing isn't set up yet. The script has commented-out `SignTool` lines to 
    It also offers to start at sign-in. This uses an elevated Task Scheduler task, so there's
    no UAC prompt each time.
 3. PacketHound lives in the notification area:
-   - Left-click opens the window, or the waiting prompt if there is one.
-   - Right-click has Pause/Resume and Exit.
+   - Left-click opens the waiting prompt if there is one, otherwise the window (on the Rules tab if apps
+     are waiting for your decision).
+   - Right-click has **Pause protection** (5 minutes, 15 minutes, 1 hour, or until you turn it back on),
+     **Turn protection on**, a link to apps waiting for your decision, and **Exit**.
+   - The tooltip shows whether protection is on, until when it's paused, and how many apps are waiting.
 4. The main window has three tabs:
    - **Rules**: search, flip a rule between Allow and Block with its switch (green = Allow,
-     red = Block) or the Allow/Block buttons, and delete rules.
-   - **Activity**: blocked attempts and what happened to each. Double-click a row to copy its IP address.
+     red = Block) or the Allow/Block buttons, and delete rules. Apps you chose to decide later about are
+     listed above the rules under *Waiting for your decision*, each with a **Decide…** button. The
+     **Status** column shows temporary and disabled rules, and rules whose program is gone
+     (**Program not found**, tinted red; **Remove missing** deletes them). Remembered installers and
+     updaters are listed with the type *Installer / updater*.
+   - **Activity**: blocked attempts and what happened to each. Double-click a row to copy its IP address;
+     right-click to copy it or to decide about an app that's still waiting.
    - **Settings**, including **Updates**: once a week PacketHound asks https://packethound.app/version.php
      for the latest version number (on by default; untick to stop, or use **Check now**). If there's a newer
      version, the main window, the tray menu and a notification link to the download page. It never
@@ -97,11 +126,15 @@ Code signing isn't set up yet. The script has commented-out `SignTool` lines to 
    choice is remembered. Rules start sorted newest first. Text too long for its column is cut off
    with "…"; select the row to see all of it.
 
+The window remembers its size, position and whether it was maximized.
+
 Prompts appear on top **without taking keyboard focus**, so typing never answers one by accident.
 
 ## Pause, exit and uninstall
 
-- **Pause protection** sets the outbound default back to Allow. Your Block rules still apply.
+- **Pause protection** sets the outbound default back to Allow. Your Block rules still apply. Pick 5 minutes,
+  15 minutes or 1 hour and protection turns itself back on (also after a restart), or pause until you turn it
+  back on.
 - **Exit** asks whether to keep blocking apps without a rule while PacketHound is closed.
   Answering No pauses protection. Either way your rules stay active: blocked apps stay blocked.
 - **Uninstall** from Windows Settings › Apps. The uninstaller asks whether to delete PacketHound's
@@ -115,25 +148,33 @@ Prompts appear on top **without taking keyboard focus**, so typing never answers
 - **The first connection fails.** PacketHound learns about an app *because* its connection was
   blocked, so after you click Allow the app has to retry. Most apps retry automatically, and a
   browser just needs a refresh. Truly holding a connection until you answer, as Little Snitch
-  does, needs a signed kernel-mode WFP callout driver.
-- **Rules cover the whole app**, not specific hosts or ports. You can narrow a rule in `wf.msc` afterwards.
+  does, needs a signed kernel-mode WFP callout driver. Some installers give up after that first
+  failure; pause protection for 5 minutes and run them again (PacketHound offers this after you allow one).
+- **Destination rules match IP addresses.** Host and domain rules learn a name's addresses as the app
+  connects, so a new address may need one retry, and sites sharing an address (CDNs) share the rule.
+  Rules can't be limited to a port from the prompt; you can narrow a rule in `wf.msc` afterwards.
 - **Group Policy wins.** On managed PCs, firewall or audit policy pushed by a domain overrides local changes.
 - **Security log volume.** Auditing also logs blocked *inbound* connections, so the Security log
   fills a little faster. It rotates automatically.
 - **Path-based rules.** A new app version installed into a new folder (some updaters do this)
-  is treated as a new program and prompts again.
+  is treated as a new program and prompts again; the old rule then shows *Program not found*.
+  Signed installers and updaters in temp folders are the exception (see above). Unsigned ones, or ones
+  that use a random file name, are asked about every run.
 
 ## Project layout
 
 ```
 src/PacketHound/
   App.xaml(.cs)               startup, single instance, first run, tray lifetime
-  Core/Controller.cs          event → decision pipeline, prompt queue, protection on/off
+  Core/Controller.cs          event → decision pipeline, prompt queue, decide-later list, pause timer,
+                              installer/updater (signed-copy) rules
   Core/FirewallManager.cs     Windows Firewall COM API (HNetCfg.FwPolicy2), rule snapshot
   Core/ConnectionMonitor.cs   Security log event 5157 subscription
   Core/AuditPolicy.cs         Filtering Platform Connection audit setting
   Core/WindowsAppClassifier.cs  "is this Windows?" rules
   Core/Signature.cs           WinVerifyTrust embedded + catalog signature verification
+  Core/TempFolders.cs         temp-folder detection, and the watcher that prepares installer rules
+  Core/ProgramPresence.cs     "is this rule's program still installed?" check
   Core/DevicePaths.cs         \device\harddiskvolumeN\… → C:\…
   Core/HostNames.cs           IP → hostname via the DNS client cache, then reverse DNS
   Core/AutoStart.cs           Task Scheduler logon task

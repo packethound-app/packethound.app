@@ -52,7 +52,7 @@ public partial class App : Application
         Log.Info("PacketHound starting");
 
         _controller = new Controller(Dispatcher);
-        _tray = new TrayIcon(_controller, ShowMain, ExitApp);
+        _tray = new TrayIcon(_controller, ShowMain, ShowDeferred, ExitApp);
         _controller.Start();
 
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
@@ -105,8 +105,15 @@ public partial class App : Application
             _main.Closed += (_, _) => _main = null;
             _main.Show();
         }
-        if (_main.WindowState == WindowState.Minimized) _main.WindowState = WindowState.Normal;
+        // A real "restore", so a window that was maximized before it was minimized comes back maximized.
+        if (_main.WindowState == WindowState.Minimized) SystemCommands.RestoreWindow(_main);
         _main.Activate();
+    }
+
+    void ShowDeferred()
+    {
+        ShowMain();
+        _main?.ShowDeferred();
     }
 
     void ExitApp()
