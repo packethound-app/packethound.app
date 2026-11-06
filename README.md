@@ -35,10 +35,14 @@ PacketHound doesn't use a kernel driver. It builds on Windows Firewall:
      **Installers and updaters in temporary folders.** Many unpack themselves into a new random folder under
      `%TEMP%` on every run, so a rule for one copy's path never matches the next. For a program running from a
      temp folder the prompt says *"This looks like an installer or updater"*, and its rule lasts until it quits,
-     so dead rules don't pile up. If it's validly signed, the answer is remembered: future copies with the same
-     file name *and* a valid signature from the same signer get it without a prompt (listed on the Rules tab as
-     *Installer / updater*). Windows Firewall can only match paths, so PacketHound watches the temp folders: when
-     a remembered program is unpacked there, its signature is checked and its rule is made before it runs.
+     so dead rules don't pile up. If it's validly signed and you allow it, that's remembered: future copies in a
+     temp folder with the same file name *and* a valid signature from the same signer are allowed without a prompt
+     (listed on the Rules tab as *Installer / updater*). Block isn't remembered, so a blocked installer asks again
+     next time instead of failing silently. Windows Firewall can only match paths, so PacketHound watches the temp
+     folders: when a remembered program is unpacked there, its signature is checked and its rule is made before it
+     runs. From the signature check until the program quits, PacketHound keeps the file open so it can't be
+     replaced, deleted or renamed; otherwise other software could swap a different program in at the allowed path.
+     (Because of that, an installer may occasionally leave its temp folder behind.)
      If PacketHound is too late (or it's the very first run, before you've answered), the first connection is
      blocked and many installers give up, so a notification offers to pause protection for 5 minutes in one click.
 

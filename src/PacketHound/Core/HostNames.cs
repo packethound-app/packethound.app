@@ -14,11 +14,17 @@ namespace PacketHound.Core;
 /// </summary>
 public static class HostNames
 {
-    static readonly ConcurrentDictionary<string, string?> Cache = new();
+    // Address → name. Addresses without a name are remembered for a while too, so an app retrying the same
+    // address doesn't cause a DNS-cache query and a (up to 3 s) reverse lookup on every attempt.
+    static readonly ConcurrentDictionary<string, (string? Name, DateTime CheckedUtc)> Cache = new();
+    static readonly TimeSpan RetryUnnamedAfter = TimeSpan.FromMinutes(5);
+    const int MaxCached = 5000;
 
     public static async Task<string?> LookupAsync(string address)
     {
-        if (Cache.TryGetValue(address, out var known) && known != null) return known;
+        if (Cache.TryGetValue(address, out var known)
+            && (known.Name != null || DateTime.UtcNow - known.CheckedUtc < RetryUnnamedAfter))
+            return known.Name;
         if (!IPAddress.TryParse(address, out var ip)) return null;
 
         var name = await Task.Run(() => FromDnsCache(address));
@@ -39,7 +45,8 @@ public static class HostNames
             }
         }
 
-        Cache[address] = name;
+        if (Cache.Count >= MaxCached) Cache.Clear(); // crude, but keeps a long-running session bounded
+        Cache[address] = (name, DateTime.UtcNow);
         return name;
     }
 

@@ -179,7 +179,7 @@ public sealed class RuleRow
     {
         ProgramState.Missing => "This program is no longer on this PC, so the rule does nothing. Use “Remove missing” to delete it.",
         ProgramState.DriveUnavailable => "The drive this program is on isn't connected right now.",
-        _ when SignedCopy != null => "This installer or updater runs from a new temporary folder each time. Your answer applies to every copy with the same file name and a valid signature from the same publisher.",
+        _ when SignedCopy != null => "This installer or updater runs from a new temporary folder each time. Your answer applies to every copy in a temporary folder with the same file name and a valid signature from the same publisher.",
         _ => null,
     };
 }

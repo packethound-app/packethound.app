@@ -52,9 +52,12 @@ public sealed class Controller
     // Apps that just got a rule: events already queued for them are stale and ignored for a moment.
     readonly Dictionary<string, DateTime> _justDecided = new(StringComparer.OrdinalIgnoreCase);
     // Apps with "until the app quits" rules, checked every few seconds while any exist.
-    // Value: when the rule was made. A rule made before the program starts gets a grace period.
-    readonly Dictionary<string, DateTime> _temporaryApps = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, TemporaryApp> _temporaryApps = new(StringComparer.OrdinalIgnoreCase);
+    // A rule made before its program starts is kept this long even if the program hasn't been seen running.
     static readonly TimeSpan TemporaryGrace = TimeSpan.FromMinutes(1);
+    // Remembered installers/updaters allowed automatically: their file is held open (no writing, deleting
+    // or renaming) for as long as the rule exists, so nothing can swap in a different program at that path.
+    readonly Dictionary<string, FileStream> _locks = new(StringComparer.OrdinalIgnoreCase);
     // Notices remembered installers/updaters being unpacked, so their rule exists before they connect.
     readonly TempFolderWatcher _tempWatcher = new();
     readonly HashSet<string> _preparing = new(StringComparer.OrdinalIgnoreCase);
@@ -68,7 +71,8 @@ public sealed class Controller
         Settings = Settings.Load();
         Updates = new UpdateService(Settings);
         ApplyClassifierSettings();
-        _temporaryTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromSeconds(3) };
+        // Every second, so a locked installer file is released quickly after it quits (and its folder can be cleaned up).
+        _temporaryTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromSeconds(1) };
         _temporaryTimer.Tick += (_, _) => CheckTemporaryRules();
         _deferredTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromSeconds(15) };
         _deferredTimer.Tick += (_, _) => CheckDeferred();
@@ -148,13 +152,27 @@ public sealed class Controller
         _tempWatcher.Dispose();
         ClearPending();
         if (_temporaryApps.Count > 0) RemoveAllTemporaryRules("PacketHound is exiting");
+        ReleaseAllLocks();
     }
 
     // ---------------------------------------------------------------- protection on/off
 
     public void EnableProtection()
     {
-        ApplyProtection();
+        try
+        {
+            ApplyProtection();
+        }
+        catch
+        {
+            // Don't leave apps silently blocked while PacketHound says protection is paused.
+            if (!Settings.ProtectionEnabled)
+            {
+                try { SetPaused(); }
+                catch (Exception ex) { Log.Error("Could not undo a failed start of protection", ex); }
+            }
+            throw;
+        }
         Settings.ProtectionEnabled = true;
         Settings.FirstRunCompleted = true;
         Settings.PausedUntil = null;
@@ -201,10 +219,20 @@ public sealed class Controller
     /// </summary>
     public void PauseProtection(TimeSpan? duration = null)
     {
-        _monitor.Stop();
-        _tempWatcher.Stop();
-        foreach (var p in FirewallManager.Profiles)
-            FirewallManager.SetDefaultOutboundAction(p, FirewallManager.ActionAllow);
+        try
+        {
+            SetPaused();
+        }
+        catch
+        {
+            // Don't leave apps unwatched (or half the profiles open) while PacketHound says protection is on.
+            if (Settings.ProtectionEnabled)
+            {
+                try { ApplyProtection(); }
+                catch (Exception ex) { Log.Error("Could not undo a failed pause", ex); }
+            }
+            throw;
+        }
         Settings.ProtectionEnabled = false;
         Settings.PausedUntil = duration == null ? null : DateTime.Now + duration;
         Settings.Save();
@@ -213,6 +241,15 @@ public sealed class Controller
         else _resumeTimer.Stop();
         Log.Info(Settings.PausedUntil is { } until ? $"Protection paused until {until:HH:mm}" : "Protection paused");
         StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Stops watching and lets apps without a rule connect (the firewall side of pausing).</summary>
+    void SetPaused()
+    {
+        _monitor.Stop();
+        _tempWatcher.Stop();
+        foreach (var p in FirewallManager.Profiles)
+            FirewallManager.SetDefaultOutboundAction(p, FirewallManager.ActionAllow);
     }
 
     /// <summary>Ends a timed pause once its time is up.</summary>
@@ -254,7 +291,12 @@ public sealed class Controller
         if (Settings.AuditFailureWasEnabled != true)
             AuditPolicy.SetFailureAuditing(false);
 
+        // Temporary rules can't stay behind even when keeping rules: nothing would be left to remove them.
+        // (The uninstaller closes a running PacketHound by force, so its own clean-up doesn't run.)
+        RemoveAllTemporaryRules("restoring Windows defaults");
+        ReleaseAllLocks();
         var removed = removeRules ? FirewallManager.RemoveAllPacketHoundRules() : 0;
+        if (removeRules) Settings.SignedCopyRules.Clear();
         try { AutoStart.Disable(); } catch (Exception ex) { Log.Error("Could not remove startup task", ex); }
 
         Settings.ProtectionEnabled = false;
@@ -408,31 +450,37 @@ public sealed class Controller
             return;
         }
 
-        // A new copy of a program you decided about by signature (e.g. an updater unpacked to a new temp folder).
-        var fileName = Path.GetFileName(path);
-        if (Settings.SignedCopyRules.Any(r => string.Equals(r.FileName, fileName, StringComparison.OrdinalIgnoreCase)))
+        // A new copy of an installer/updater you allowed before, unpacked to a new temp folder.
+        if (MightBeRemembered(path))
         {
             if (!_signatureChecks.Add(path))
             {
                 AddActivity(c, app, "Blocked · checking its signature");
                 return;
             }
+            FileStream? fileLock = null;
             string? signer;
             try
             {
-                signer = await Task.Run(() => Signature.GetVerifiedSigner(path));
+                // Lock first, then check: the file that was checked is the one that stays there.
+                (fileLock, signer) = await Task.Run(() =>
+                {
+                    var locked = TryLock(path);
+                    return (locked, locked == null ? null : Signature.GetVerifiedSigner(path));
+                });
             }
             finally
             {
                 _signatureChecks.Remove(path);
             }
-            if (!Settings.ProtectionEnabled) return;
-            if (Settings.SignedCopyRules.FirstOrDefault(r => r.Matches(path, signer)) is { } signedRule && !_pending.ContainsKey(path))
+            if (Settings.ProtectionEnabled && !_pending.ContainsKey(path) && fileLock != null
+                && Settings.SignedCopyRules.FirstOrDefault(r => r.Matches(path, signer)) is { } signedRule)
             {
-                ApplySignedCopyRule(signedRule, app, c, hostName: null);
+                ApplySignedCopyRule(signedRule, app, c, hostName: null, fileLock);
                 return;
             }
-            if (_pending.ContainsKey(path)) return; // asked about while the signature was being checked
+            fileLock?.Dispose();
+            if (!Settings.ProtectionEnabled || _pending.ContainsKey(path)) return; // paused, or asked about meanwhile
         }
 
         var request = new PendingRequest(app, c);
@@ -443,20 +491,46 @@ public sealed class Controller
         Ask(request);
     }
 
-    /// <summary>
-    /// Gives a new copy of a program the decision from a signed-copy rule, as a rule for this copy's path.
-    /// <paramref name="inAdvance"/>: made when its file appeared, before it ran (null connection).
-    /// </summary>
-    void ApplySignedCopyRule(SignedCopyRule rule, AppDetails app, BlockedConnection? c, string? hostName, bool inAdvance = false)
+    /// <summary>Quick name check before the (slower) signature check: a temp-folder file named like a remembered installer.</summary>
+    bool MightBeRemembered(string path)
     {
-        var path = app.Path;
-        // Copies in temp folders are gone after one run, so their rule goes when they quit.
-        var temporary = TempFolders.Contains(path);
+        if (!TempFolders.Contains(path)) return false;
+        var fileName = Path.GetFileName(path);
+        return Settings.SignedCopyRules.Any(r => string.Equals(r.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Opens the file so it can't be changed, deleted or renamed (nor its folder) while open; it can still be
+    /// read and run. Null if that's not possible right now (e.g. something is still writing it).
+    /// </summary>
+    static FileStream? TryLock(string path)
+    {
         try
         {
-            FirewallManager.SetAppRule(path, app.DisplayName, rule.Allow, windowsComponent: false, temporary,
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gives a new copy of a remembered installer/updater its rule, for this copy's path, removed when it quits.
+    /// <paramref name="fileLock"/> keeps the checked file in place for as long as the rule exists.
+    /// <paramref name="inAdvance"/>: made when its file appeared, before it ran (null connection).
+    /// </summary>
+    void ApplySignedCopyRule(SignedCopyRule rule, AppDetails app, BlockedConnection? c, string? hostName, FileStream fileLock,
+        bool inAdvance = false)
+    {
+        var path = app.Path;
+        try
+        {
+            FirewallManager.SetAppRule(path, app.DisplayName, rule.Allow, windowsComponent: false, temporary: true,
                 note: $" (copy of {rule.FileName} signed by {rule.Signer})");
-            if (temporary) TrackTemporary(path);
+            ReleaseLock(path);
+            _locks[path] = fileLock;
+            TrackTemporary(path);
             _justDecided[path] = DateTime.UtcNow;
             InvalidateRules();
             AddActivity(c ?? new BlockedConnection(), app,
@@ -465,12 +539,24 @@ public sealed class Controller
                 : "Blocked automatically · installer/updater you blocked before", hostName);
             RulesChanged?.Invoke(this, EventArgs.Empty);
             // Too late to be ready before it connected: an installer has probably given up, so offer the pause.
-            if (!inAdvance && rule.Allow && temporary) InstallerAllowed?.Invoke(this, app.DisplayName);
+            if (!inAdvance && rule.Allow) InstallerAllowed?.Invoke(this, app.DisplayName);
         }
         catch (Exception ex)
         {
+            if (!_locks.ContainsValue(fileLock)) fileLock.Dispose();
             SetError($"Could not create the firewall rule for {app.DisplayName}: {ex.Message}", ex);
         }
+    }
+
+    void ReleaseLock(string path)
+    {
+        if (_locks.Remove(path, out var fileLock)) fileLock.Dispose();
+    }
+
+    void ReleaseAllLocks()
+    {
+        foreach (var fileLock in _locks.Values) fileLock.Dispose();
+        _locks.Clear();
     }
 
     /// <summary>
@@ -481,20 +567,27 @@ public sealed class Controller
     {
         try
         {
-            if (!Settings.ProtectionEnabled) return;
-            var fileName = Path.GetFileName(path);
-            if (!Settings.SignedCopyRules.Any(r => string.Equals(r.FileName, fileName, StringComparison.OrdinalIgnoreCase))) return;
+            if (!Settings.ProtectionEnabled || !MightBeRemembered(path)) return;
             if (!_preparing.Add(path)) return;
+            FileStream? fileLock = null;
             try
             {
-                var signer = await Task.Run(() => WaitUntilWritten(path) ? Signature.GetVerifiedSigner(path) : null);
-                if (!Settings.ProtectionEnabled || signer == null) return;
+                // Lock once it's fully written, then check: the file that was checked is the one that stays there.
+                string? signer;
+                (fileLock, signer) = await Task.Run(() =>
+                {
+                    var locked = LockWhenWritten(path);
+                    return (locked, locked == null ? null : Signature.GetVerifiedSigner(path));
+                });
+                if (fileLock == null || !Settings.ProtectionEnabled) return;
                 if (Settings.SignedCopyRules.FirstOrDefault(r => r.Matches(path, signer)) is not { } rule) return;
                 if (Rules().HasDecision(path) || _pending.ContainsKey(path)) return;
-                ApplySignedCopyRule(rule, AppDetails.For(path), null, null, inAdvance: true);
+                ApplySignedCopyRule(rule, AppDetails.For(path), null, null, fileLock, inAdvance: true);
+                fileLock = null; // kept until the rule goes
             }
             finally
             {
+                fileLock?.Dispose();
                 _preparing.Remove(path);
             }
         }
@@ -504,23 +597,26 @@ public sealed class Controller
         }
     }
 
-    /// <summary>Waits (up to ~10 s) until nothing is writing the file any more. False if it vanished or never finished.</summary>
-    static bool WaitUntilWritten(string path)
+    /// <summary>
+    /// Waits (up to ~10 s) until nothing is writing the file any more, and returns it locked (see <see cref="TryLock"/>).
+    /// Null if it vanished or never finished.
+    /// </summary>
+    static FileStream? LockWhenWritten(string path)
     {
         for (var i = 0; i < 200; i++)
         {
             try
             {
-                // Fails while another handle can still write to the file.
-                using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete)) return true;
+                // Fails while another handle can still write to (or delete) the file.
+                return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             }
-            catch (FileNotFoundException) { return false; }
-            catch (DirectoryNotFoundException) { return false; }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
             catch (IOException) { }
-            catch (UnauthorizedAccessException) { return false; }
             Thread.Sleep(50);
         }
-        return false;
+        return null;
     }
 
     async void LookUpSigner(PendingRequest request)
@@ -537,29 +633,39 @@ public sealed class Controller
 
     // ---------------------------------------------------------------- signed-copy rules
 
-    /// <summary>Adds or replaces the signed-copy rule for a program, and applies it to matching apps already waiting.</summary>
-    void AddSignedCopyRule(PendingRequest request, bool allow)
+    /// <summary>
+    /// Remembers an installer/updater the user allowed, and applies that to matching copies already waiting.
+    /// Only Allow is remembered: a remembered Block would make the installer fail silently on every later run.
+    /// </summary>
+    void RememberInstaller(PendingRequest request)
     {
         var rule = new SignedCopyRule
         {
             FileName = request.FileName, Signer = request.Signer!, DisplayName = request.DisplayName,
-            Allow = allow, Created = DateTime.Now,
+            Allow = true, Created = DateTime.Now,
         };
         Settings.SignedCopyRules.RemoveAll(r => r.Key == rule.Key);
         Settings.SignedCopyRules.Add(rule);
         SaveSettings();
-        Log.Info($"Signed-copy rule: {(allow ? "allow" : "block")} {rule.FileName} signed by {rule.Signer}");
+        Log.Info($"Remembered installer/updater: {rule.FileName} signed by {rule.Signer}");
 
-        // Other copies already waiting (in the queue or decided later) get the same answer.
+        // Other copies already waiting (in the queue or decided later) get the same answer, once their file
+        // is locked and its signature checked again.
         foreach (var waiting in _pending.Values.Where(p => p != request && rule.Matches(p.AppPath, p.Signer)).ToList())
         {
+            var fileLock = TryLock(waiting.AppPath);
+            if (fileLock == null || !rule.Matches(waiting.AppPath, Signature.GetVerifiedSigner(waiting.AppPath)))
+            {
+                fileLock?.Dispose();
+                continue;
+            }
             _queue.Remove(waiting);
             Deferred.Remove(waiting);
             _pending.Remove(waiting.AppPath);
             ApplySignedCopyRule(rule, waiting.App, new BlockedConnection
             {
                 RemoteAddress = waiting.RemoteAddress, RemotePort = waiting.RemotePort, ProcessId = waiting.ProcessId,
-            }, waiting.HostName);
+            }, waiting.HostName, fileLock);
         }
     }
 
@@ -787,9 +893,9 @@ public sealed class Controller
                     }, request.App, $"You {(allow ? "allowed" : "blocked")} {what}{(untilQuit ? " until it quits" : "")}", request.HostName);
                     if (request.InTempFolder)
                     {
-                        // Installers and updaters unpack to a new temp folder each run: a signed one gets the same
-                        // answer next time without asking (same file name and signer).
-                        if (destination == null && request.Signer != null) AddSignedCopyRule(request, allow);
+                        // Installers and updaters unpack to a new temp folder each run: a signed one you allow is
+                        // allowed next time without asking (same file name and signer). Blocks aren't remembered.
+                        if (allow && destination == null && request.Signer != null) RememberInstaller(request);
                         if (allow) InstallerAllowed?.Invoke(this, request.DisplayName);
                     }
                     RulesChanged?.Invoke(this, EventArgs.Empty);
@@ -810,21 +916,36 @@ public sealed class Controller
 
     // ---------------------------------------------------------------- "until the app quits" rules
 
+    sealed class TemporaryApp
+    {
+        public DateTime Made { get; } = DateTime.UtcNow;
+        public bool SeenRunning { get; set; }
+    }
+
     void TrackTemporary(string path)
     {
-        _temporaryApps[path] = DateTime.UtcNow;
+        _temporaryApps[path] = new TemporaryApp();
         _temporaryTimer.Start();
     }
 
-    /// <summary>Removes an app's temporary rules once no process of that program is running.</summary>
+    /// <summary>
+    /// Removes an app's temporary rules once no process of that program is running. A rule made before its
+    /// program started is kept for a short grace period until the program has been seen running.
+    /// </summary>
     void CheckTemporaryRules()
     {
-        foreach (var (path, made) in _temporaryApps.ToList())
+        foreach (var (path, app) in _temporaryApps.ToList())
         {
             try
             {
-                if (DateTime.UtcNow - made < TemporaryGrace || RunningPrograms.IsRunning(path)) continue;
+                if (RunningPrograms.IsRunning(path))
+                {
+                    app.SeenRunning = true;
+                    continue;
+                }
+                if (!app.SeenRunning && DateTime.UtcNow - app.Made < TemporaryGrace) continue;
                 _temporaryApps.Remove(path);
+                ReleaseLock(path);
                 var removed = FirewallManager.RemoveTemporaryRules(path);
                 if (removed == 0) continue;
                 Log.Info($"{path} quit: removed {removed} temporary rule(s)");
@@ -853,6 +974,7 @@ public sealed class Controller
         }
         _temporaryApps.Clear();
         _temporaryTimer.Stop();
+        ReleaseAllLocks();
     }
 
     void ClosePrompt()
@@ -913,6 +1035,7 @@ public sealed class Controller
                     Result = $"Program no longer exists · rule{label} removed",
                 });
             }
+            while (Activity.Count > MaxActivity) Activity.RemoveAt(Activity.Count - 1);
         }
         finally
         {

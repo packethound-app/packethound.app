@@ -60,16 +60,15 @@ public partial class PromptWindow : Window
     }
 
     /// <summary>
-    /// For installers and updaters in a temp folder. A signed one (checked in the background, so this can
-    /// change a moment after the prompt opens) has its answer remembered for future copies whenever the
-    /// rule covers any connection.
+    /// For installers and updaters in a temp folder. If a signed one (checked in the background, so this can
+    /// change a moment after the prompt opens) is allowed for any connection, future copies are allowed too.
     /// </summary>
     void UpdateTempNote()
     {
         if (!_request.InTempFolder) return;
         var remembered = _request.Signer != null && (ScopeBox.SelectedItem as ScopeOption)?.Destination == null;
         TempText.Text = "This looks like an installer or updater."
-                        + (remembered ? " PacketHound will remember your answer the next time it runs." : "");
+                        + (remembered ? " If you allow it, PacketHound will remember that the next time it runs." : "");
     }
 
     /// <summary>

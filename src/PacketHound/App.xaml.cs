@@ -119,7 +119,29 @@ public partial class App : Application
     void ExitApp()
     {
         if (_controller == null) return;
-        if (_controller.ProtectionEnabled)
+        if (_controller.PausedUntil is { } until)
+        {
+            // Only a running PacketHound can end a timed pause.
+            var answer = MessageBox.Show(
+                $"Protection is paused until {until:t}, but PacketHound has to be running to turn it back on.\n\n" +
+                "Turn protection back on now before exiting?\n\n" +
+                "Yes: turn it on now (apps without a rule are blocked while PacketHound is closed).\n" +
+                "No: exit and leave it paused until PacketHound next starts.",
+                "Exit PacketHound", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+            if (answer == MessageBoxResult.Cancel) return;
+            if (answer == MessageBoxResult.Yes)
+            {
+                try { _controller.EnableProtection(); }
+                catch (Exception ex)
+                {
+                    Log.Error("Turning protection on at exit failed", ex);
+                    MessageBox.Show("Could not turn protection back on: " + ex.Message, "PacketHound",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+            }
+        }
+        else if (_controller.ProtectionEnabled)
         {
             var answer = MessageBox.Show(
                 "Keep blocking apps that don't have a rule while PacketHound is closed?\n\n" +

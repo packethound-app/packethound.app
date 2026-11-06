@@ -96,8 +96,10 @@ public sealed class SignedCopyRule
     [System.Text.Json.Serialization.JsonIgnore]
     public string Key => $"{FileName}|{Signer}".ToLowerInvariant();
 
+    /// <summary>Only copies in a temp folder match: elsewhere a common name like setup.exe would be far too broad.</summary>
     public bool Matches(string path, string? signer) =>
         signer != null
+        && TempFolders.Contains(path)
         && string.Equals(Path.GetFileName(path), FileName, StringComparison.OrdinalIgnoreCase)
         && string.Equals(signer, Signer, StringComparison.Ordinal);
 }

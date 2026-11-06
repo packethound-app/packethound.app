@@ -11,8 +11,10 @@
 - **Timed pause**: pause protection for 5 minutes, 15 minutes or an hour, and it turns itself back on,
   even after a restart.
 - **Installers and updaters** running from a temporary folder are recognised: their rules last only until
-  they quit, and signed ones are remembered (same file name and signer), so the next copy is let through
-  before it even starts. PacketHound watches the temp folders to make that rule as the file is unpacked.
+  they quit, and signed ones you allow are remembered (same file name and signer, temp folders only), so the
+  next copy is let through before it even starts. PacketHound watches the temp folders to make that rule as
+  the file is unpacked, and keeps the checked file locked until it quits so nothing can be swapped in.
+- A timed pause warns when you exit PacketHound, since only a running PacketHound can turn protection back on.
 - After you allow an installer, a notification offers to pause protection for 5 minutes in one click, for
   installers that give up after their first blocked attempt.
 - Rules for programs that are no longer on the PC are highlighted as **Program not found**, and
