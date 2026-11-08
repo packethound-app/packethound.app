@@ -7,6 +7,8 @@ Windows itself is never prompted for.
 
 **Download:** https://packethound.app (Windows 10 1809+ / Windows 11, 64-bit)
 
+<a href="https://www.buymeacoffee.com/Henrys_Cat" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+
 ## How it works
 
 PacketHound doesn't use a kernel driver. It builds on Windows Firewall:
