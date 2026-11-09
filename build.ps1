@@ -51,8 +51,9 @@ foreach ($a in 'x64', 'arm64') {
 }
 
 # Ready for the website: upload website\downloads\ along with the rest of the site.
-# Only x64 for now; the ARM64 installer stays in publish\ until it has been tested on an ARM PC.
 $siteDownloads = "$PSScriptRoot\website\downloads"
 New-Item -ItemType Directory -Force $siteDownloads | Out-Null
-Copy-Item $setups['x64'].FullName $siteDownloads -Force
-Write-Host "Copied to:  $siteDownloads\$($setups['x64'].Name)"
+foreach ($setup in $setups.Values) {
+    Copy-Item $setup.FullName $siteDownloads -Force
+    Write-Host "Copied to:  $siteDownloads\$($setup.Name)"
+}

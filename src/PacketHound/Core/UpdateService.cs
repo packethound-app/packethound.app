@@ -22,7 +22,10 @@ public sealed class UpdateService
 {
     public static readonly Uri Website = new("https://packethound.app/");
     static readonly Uri VersionUrl = new(Website, "version.php");
-    public static readonly Uri DownloadPage = new(Website, "download.php");
+    /// <summary>The ARM64 build asks for the ARM64 installer to be the main download.</summary>
+    public static readonly Uri DownloadPage = new(Website,
+        System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.Arm64
+            ? "download.php?arch=arm64" : "download.php");
     static readonly TimeSpan Interval = TimeSpan.FromDays(7);
 
     static readonly HttpClient Http = CreateClient();
