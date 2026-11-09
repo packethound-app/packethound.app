@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -26,6 +27,27 @@ public static class RunningPrograms
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// The command line a process was started with, or null if it has exited (or can't be read). Slow-ish
+    /// (a WMI query), so call it off the UI thread.
+    /// </summary>
+    public static string? CommandLine(int pid)
+    {
+        if (pid <= 4) return null; // System Idle / System
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}");
+            using var results = searcher.Get();
+            return results.Cast<System.Management.ManagementObject>().Select(o => o["CommandLine"] as string)
+                .FirstOrDefault(c => !string.IsNullOrWhiteSpace(c))?.Trim();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     static string? ImagePath(int pid)

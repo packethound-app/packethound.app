@@ -108,6 +108,8 @@
         <Border DockPanel.Dock="Top" Padding="20,12" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1">
             <DockPanel>
                 <Button x:Name="ToggleButton" DockPanel.Dock="Right" VerticalAlignment="Center" MinWidth="170" Click="Toggle_Click"/>
+                <Button x:Name="QuietButton" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,10,0" Click="Quiet_Click"
+                        ToolTip="Stop asking about new apps for a while. They stay blocked, and are listed so you can decide later."/>
                 <Image DockPanel.Dock="Left" Source="/Assets/logo.png" Height="72" Margin="0,0,20,0" VerticalAlignment="Center"
                        RenderOptions.BitmapScalingMode="HighQuality"/>
                 <Rectangle DockPanel.Dock="Left" Width="1" Fill="{StaticResource Line}" Margin="0,4,20,4"/>
@@ -115,6 +117,7 @@
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock x:Name="StatusTitle" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
                     <TextBlock x:Name="StatusDetail" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,16,0"/>
+                    <TextBlock x:Name="QuietText" Foreground="{StaticResource Warning}" TextWrapping="Wrap" Margin="0,4,16,0" Visibility="Collapsed"/>
                     <TextBlock x:Name="ErrorText" Foreground="{StaticResource Danger}" TextWrapping="Wrap" Margin="0,4,16,0" Visibility="Collapsed"/>
                     <WrapPanel>
                         <TextBlock x:Name="PendingText" Margin="0,4,16,0" Visibility="Collapsed">
@@ -143,6 +146,8 @@
                                   Content="Show automatic Windows rules" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
                         <Button DockPanel.Dock="Right" Content="Refresh" Click="Refresh_Click"/>
                         <Button DockPanel.Dock="Right" Content="Delete" Margin="0,0,8,0" Click="Delete_Click"/>
+                        <Button x:Name="EditButton" DockPanel.Dock="Right" Content="Edit…" Margin="0,0,8,0" Click="Edit_Click"
+                                IsEnabled="False" ToolTipService.ShowOnDisabled="True" ToolTip="Select a rule to edit."/>
                         <Button DockPanel.Dock="Right" Content="Block" Margin="0,0,8,0" Click="Block_Click"/>
                         <Button DockPanel.Dock="Right" Content="Allow" Margin="0,0,8,0" Click="Allow_Click"/>
                         <Button x:Name="RemoveMissingButton" DockPanel.Dock="Right" Margin="0,0,8,0" Click="RemoveMissing_Click"
@@ -197,7 +202,7 @@
                     </Border>
                     <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" Foreground="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap"
                                Text="These are ordinary Windows Firewall outbound rules (wf.msc › Outbound Rules, group “PacketHound”). Deleting a rule means PacketHound will ask about that app again."/>
-                    <DataGrid x:Name="RulesGrid">
+                    <DataGrid x:Name="RulesGrid" SelectionChanged="RulesGrid_SelectionChanged" MouseDoubleClick="RulesGrid_DoubleClick">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow">
                                 <Style.Triggers>
@@ -254,7 +259,7 @@
                 <DockPanel Margin="10">
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10" LastChildFill="False">
                         <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="{StaticResource Muted}"
-                                   Text="Outgoing connections the firewall blocked since PacketHound started, and what happened next. Double-click a row to copy its IP address; right-click for more."/>
+                                   Text="Outgoing connections the firewall blocked, and what happened next (kept for as long as set in Settings). Double-click a row to copy its IP address; right-click for more."/>
                         <Button DockPanel.Dock="Right" Content="Clear" Click="ClearActivity_Click"/>
                         <TextBlock x:Name="CopiedText" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0"
                                    Foreground="{StaticResource Success}" Visibility="Collapsed"/>
@@ -264,6 +269,7 @@
                             <ContextMenu>
                                 <MenuItem x:Name="DecideNowItem" Header="Decide now…" Click="ActivityDecideNow_Click"/>
                                 <MenuItem x:Name="CopyAddressItem" Header="Copy IP address" Click="ActivityCopy_Click"/>
+                                <MenuItem x:Name="CopyHostItem" Header="Copy host name" Click="ActivityCopyHost_Click"/>
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
@@ -301,6 +307,19 @@
                                     Click="DownloadUpdate_Click" Margin="0,0,12,8" Visibility="Collapsed"/>
                             <TextBlock x:Name="UpdateCheckText" Style="{StaticResource Value}" VerticalAlignment="Center" Margin="0,0,0,8"/>
                         </WrapPanel>
+
+                        <TextBlock Text="Activity" FontSize="15" FontWeight="SemiBold" Margin="0,16,0,8"/>
+                        <WrapPanel>
+                            <TextBlock Text="Keep the Activity list for" Foreground="{StaticResource Ink}" VerticalAlignment="Center" Margin="0,0,10,8"/>
+                            <ComboBox x:Name="ActivityKeepBox" MinWidth="160" Padding="8,4" Margin="0,0,0,8" SelectionChanged="ActivityKeep_Changed">
+                                <ComboBoxItem Content="This session only" Tag="0"/>
+                                <ComboBoxItem Content="1 day" Tag="1"/>
+                                <ComboBoxItem Content="7 days" Tag="7"/>
+                                <ComboBoxItem Content="30 days" Tag="30"/>
+                            </ComboBox>
+                        </WrapPanel>
+                        <TextBlock Style="{StaticResource Label}" Margin="0,0,0,8" TextWrapping="Wrap"
+                                   Text="Saved in the log folder, so what was blocked while you were away is still listed after a restart. The list shows the latest 5,000 entries."/>
 
                         <TextBlock Text="What counts as Windows" FontSize="15" FontWeight="SemiBold" Margin="0,16,0,8"/>
                         <TextBlock Style="{StaticResource Label}" TextWrapping="Wrap" Margin="0,0,0,8"

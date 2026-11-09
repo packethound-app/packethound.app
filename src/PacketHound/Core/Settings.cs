@@ -24,6 +24,9 @@ public sealed class Settings
     /// <summary>Ask before letting Windows tools such as PowerShell, curl or rundll32 connect.</summary>
     public bool AskForScriptingTools { get; set; } = true;
 
+    /// <summary>How many days the Activity list is kept across restarts (0: this session only).</summary>
+    public int ActivityKeepDays { get; set; } = 1;
+
     /// <summary>How long "Decide later" postpones a prompt, in minutes.</summary>
     public int SnoozeMinutes { get; set; } = 10;
 

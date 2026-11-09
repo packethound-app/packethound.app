@@ -32,6 +32,29 @@ public sealed class FirewallRuleInfo
     /// <summary>Removed automatically when the app quits.</summary>
     public bool IsTemporary => IsPacketHound && Description.Contains(FirewallManager.TemporaryMarker, StringComparison.Ordinal);
 
+    /// <summary>When a timed rule ("for 1 hour") is removed; null for rules without an end time.</summary>
+    public DateTime? Expires
+    {
+        get
+        {
+            if (!IsPacketHound) return null;
+            var m = FirewallManager.ExpiresPattern.Match(Description);
+            return m.Success && DateTime.TryParseExact(m.Groups[1].Value, "yyyy-MM-dd HH:mm",
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
+        }
+    }
+
+    /// <summary>The program's verified signer when the rule was made (recorded for rules made from the prompt).</summary>
+    public string? Signer
+    {
+        get
+        {
+            if (!IsPacketHound) return null;
+            var m = FirewallManager.SignerPattern.Match(Description);
+            return m.Success ? m.Groups[1].Value : null;
+        }
+    }
+
     public bool IsPacketHound => Grouping == FirewallManager.UserGroup || Grouping == FirewallManager.WindowsGroup;
     public bool IsWindowsAuto => Grouping == FirewallManager.WindowsGroup;
 
@@ -69,6 +92,11 @@ public static class FirewallManager
     public const string WindowsGroup = "PacketHound (Windows components)";
     public const string RulePrefix = "PacketHound: ";
     public const string TemporaryMarker = "Removed when the app quits.";
+    internal static readonly Regex ExpiresPattern = new(@"\s*Expires (\d{4}-\d{2}-\d{2} \d{2}:\d{2})\.", RegexOptions.CultureInvariant);
+    internal static readonly Regex SignerPattern = new(@"signed by “([^”]+)”", RegexOptions.CultureInvariant);
+
+    /// <summary>The note that records who signed the program, read back by <see cref="FirewallRuleInfo.Signer"/>.</summary>
+    public static string? SignerNote(string? signer) => signer == null ? null : $" (signed by “{signer}”)";
     const int MaxRemoteAddresses = 1000;
 
     public const int ActionBlock = 0;
@@ -153,16 +181,17 @@ public static class FirewallManager
 
     /// <summary>
     /// Creates (or replaces) the whole-app PacketHound rule for an application. Any destination rules
-    /// the app had are removed too, since this decision covers every connection.
+    /// the app had are removed too, since this decision covers every connection. Returns the rule's name.
     /// </summary>
-    public static void SetAppRule(string appPath, string displayName, bool allow, bool windowsComponent, bool temporary = false,
-        string? note = null)
+    public static string SetAppRule(string appPath, string displayName, bool allow, bool windowsComponent, bool temporary = false,
+        string? note = null, DateTime? expires = null)
     {
         RemovePacketHoundRulesFor(appPath);
         note = windowsComponent ? " (Windows component, allowed automatically)" : note ?? "";
-        AddRule(BuildRuleName(displayName, appPath), appPath, allow, windowsComponent ? WindowsGroup : UserGroup,
-            Describe(note, null, temporary), remoteAddresses: null);
-        Log.Info($"{(allow ? "Allow" : "Block")} rule created for {appPath}{(windowsComponent ? " (Windows)" : "")}{(temporary ? " until it quits" : "")}");
+        var name = BuildRuleName(displayName, appPath);
+        AddRule(name, appPath, allow, windowsComponent ? WindowsGroup : UserGroup, Describe(note, null, temporary, expires), remoteAddresses: null);
+        Log.Info($"{(allow ? "Allow" : "Block")} rule created for {appPath}{(windowsComponent ? " (Windows)" : "")}{Lifetime(temporary, expires)}");
+        return name;
     }
 
     /// <summary>
@@ -170,17 +199,20 @@ public static class FirewallManager
     /// Returns the rule's name.
     /// </summary>
     public static string SetDestinationRule(string appPath, string displayName, bool allow, RuleDestination destination,
-        IEnumerable<string> addresses, bool temporary)
+        IEnumerable<string> addresses, bool temporary, DateTime? expires = null, string? note = null)
     {
         var list = addresses.Select(NormalizeAddress).OfType<string>().Distinct().Take(MaxRemoteAddresses).ToList();
         if (list.Count == 0) throw new ArgumentException("No valid IP address for the rule.", nameof(addresses));
 
         var name = BuildRuleName(displayName, appPath, destination);
         if (GetPacketHoundRules().Any(r => r.Name == name)) RemoveRule(name);
-        AddRule(name, appPath, allow, UserGroup, Describe("", destination, temporary), string.Join(",", list));
-        Log.Info($"{(allow ? "Allow" : "Block")} rule for {appPath} → {destination.Label} ({list.Count} addresses){(temporary ? " until it quits" : "")}");
+        AddRule(name, appPath, allow, UserGroup, Describe(note ?? "", destination, temporary, expires), string.Join(",", list));
+        Log.Info($"{(allow ? "Allow" : "Block")} rule for {appPath} → {destination.Label} ({list.Count} addresses){Lifetime(temporary, expires)}");
         return name;
     }
+
+    static string Lifetime(bool temporary, DateTime? expires) =>
+        temporary ? " until it quits" : expires is { } e ? string.Create(CultureInfo.InvariantCulture, $" until {e:yyyy-MM-dd HH:mm}") : "";
 
     /// <summary>Adds addresses to a destination rule. Returns true if the rule changed.</summary>
     public static bool AddRemoteAddresses(string ruleName, IEnumerable<string> addresses)
@@ -201,11 +233,12 @@ public static class FirewallManager
         return true;
     }
 
-    static string Describe(string note, RuleDestination? destination, bool temporary)
+    static string Describe(string note, RuleDestination? destination, bool temporary, DateTime? expires = null)
     {
         var text = string.Create(CultureInfo.InvariantCulture, $"Created by PacketHound on {DateTime.Now:yyyy-MM-dd HH:mm}{note}.");
         if (destination != null) text += " " + destination.DescriptionText;
         if (temporary) text += " " + TemporaryMarker;
+        if (expires is { } e) text += string.Create(CultureInfo.InvariantCulture, $" Expires {e:yyyy-MM-dd HH:mm}.");
         return text;
     }
 
@@ -266,6 +299,24 @@ public static class FirewallManager
         rule.Grouping = UserGroup;
         rule.Enabled = true;
         Log.Info($"Rule '{ruleName}' changed to {(allow ? "Allow" : "Block")}");
+    }
+
+    /// <summary>Turns an "until the app quits" or timed rule into one that stays.</summary>
+    public static void MakePermanent(string ruleName)
+    {
+        dynamic policy = CreatePolicy();
+        dynamic rule = policy.Rules.Item(ruleName);
+        string description = (string?)rule.Description ?? "";
+        rule.Description = ExpiresPattern.Replace(description.Replace(TemporaryMarker, ""), "").TrimEnd();
+        Log.Info($"Rule '{ruleName}' made permanent");
+    }
+
+    /// <summary>Removes the timed rules whose time is up (or all timed rules, with null). Returns the ones removed.</summary>
+    public static List<FirewallRuleInfo> RemoveTimedRules(DateTime? upTo)
+    {
+        var rules = GetPacketHoundRules().Where(r => r.Expires is { } e && (upTo == null || e <= upTo)).ToList();
+        foreach (var r in rules) RemoveRule(r.Name);
+        return rules;
     }
 
     public static void RemoveRule(string ruleName)
@@ -359,6 +410,9 @@ public sealed class RuleSnapshot
     }
 
     public static RuleSnapshot Take() => new(FirewallManager.GetOutboundProgramRules());
+
+    /// <summary>Every program with outbound rules, with its rules.</summary>
+    public IEnumerable<KeyValuePair<string, List<FirewallRuleInfo>>> Programs => _byApp;
 
     IEnumerable<FirewallRuleInfo> For(string path) =>
         _byApp.TryGetValue(FirewallManager.NormalizePath(path), out var l) ? l : Enumerable.Empty<FirewallRuleInfo>();

@@ -2,11 +2,28 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows.Media;
 
 namespace PacketHound.Core;
 
-public enum PromptDecision { Later, Allow, Block, Dismiss }
+/// <summary>SameAsBefore: copy the rules of the app's earlier version (see <see cref="PendingRequest.PreviousVersion"/>).</summary>
+public enum PromptDecision { Later, Allow, Block, Dismiss, SameAsBefore }
+
+/// <summary>
+/// A rule as changed in the Edit dialog. Destination is null for "Any connection". Temporary: until the app
+/// quits; Expires: a timed rule's end.
+/// </summary>
+public sealed record RuleEdit(bool Allow, RuleDestination? Destination, bool Temporary, DateTime? Expires);
+
+public static class TimeText
+{
+    /// <summary>"18:30" today, "tomorrow 09:00", or the date and time.</summary>
+    public static string When(DateTime t) =>
+        t.Date == DateTime.Today ? t.ToString("t")
+        : t.Date == DateTime.Today.AddDays(1) ? "tomorrow " + t.ToString("t")
+        : t.ToString("g");
+}
 
 /// <summary>
 /// One entry in the prompt's "Applies to" list. Destination is null for "Any connection". Address and
@@ -47,11 +64,39 @@ public sealed class PendingRequest : INotifyPropertyChanged
     /// <summary>Verified Authenticode signer, filled in shortly after the request is created (null: unsigned or not checked yet).</summary>
     public string? Signer { get; private set; }
 
+    /// <summary>The signature has been checked (so a null <see cref="Signer"/> means unsigned).</summary>
+    public bool SignerChecked { get; private set; }
+
     public void SetSigner(string? signer)
     {
         Signer = signer;
+        SignerChecked = true;
         Changed();
     }
+
+    /// <summary>An earlier version of this program (in another versioned folder) that has rules; found when the request is made.</summary>
+    public PreviousVersion? PreviousVersion { get; init; }
+
+    /// <summary>For script hosts and interpreters: the prompt shows the command line of the process that connected.</summary>
+    public bool ShowsCommandLine => WindowsAppClassifier.ShowsCommandLine(AppPath);
+
+    public string? CommandLine { get; private set; }
+    bool _commandLineChecked;
+
+    public string CommandLineText => CommandLine ?? (_commandLineChecked ? "Unknown: the process has already exited" : "Looking it up…");
+
+    /// <summary>The command line of process <paramref name="pid"/>; ignored if a newer attempt came from another process meanwhile.</summary>
+    public void SetCommandLine(int pid, string? commandLine)
+    {
+        if (pid != ProcessId) return;
+        // A newer process that has already exited keeps the last command line seen.
+        if (commandLine != null || CommandLine == null) CommandLine = commandLine;
+        _commandLineChecked = true;
+        Changed();
+    }
+
+    /// <summary>Waiting because of quiet mode (rather than the user's "Decide later"); asked about when it ends.</summary>
+    public bool QuietDeferred { get; set; }
 
     public AppDetails App { get; }
     public string AppPath => App.Path;
@@ -81,7 +126,49 @@ public sealed class PendingRequest : INotifyPropertyChanged
     }
 
     public string ProcessText => ProcessName != null ? $"{ProcessName}.exe (PID {ProcessId})" : $"PID {ProcessId}";
-    public string AttemptsText => Attempts == 1 ? "1 attempt blocked so far" : $"{Attempts} attempts blocked so far";
+
+    public string AttemptsText
+    {
+        get
+        {
+            var text = Attempts == 1 ? "1 attempt blocked so far" : $"{Attempts} attempts blocked so far";
+            var count = _addressesSeen.Count;
+            return count > 1 ? $"{text}, to {count}{(count >= MaxAddressesCounted ? "+" : "")} different addresses" : text;
+        }
+    }
+
+    // ---------------------------------------------------------------- every destination it tried
+
+    /// <summary>A destination the app tried while waiting, offered under "Applies to".</summary>
+    public sealed class SeenDestination
+    {
+        public SeenDestination(string address) => Address = address;
+        public string Address { get; }
+        public int Port { get; set; }
+        public string? HostName { get; set; }
+    }
+
+    // Offered in the prompt, in the order first tried. Later ones are only counted: nobody picks one of 50 addresses.
+    const int MaxDestinations = 50;
+    const int MaxAddressesCounted = 1000;
+    readonly List<SeenDestination> _destinations = new();
+    readonly HashSet<string> _addressesSeen = new();
+
+    public IReadOnlyList<SeenDestination> Destinations => _destinations;
+
+    /// <summary>
+    /// The addresses a rule for <paramref name="destination"/> starts with: the one chosen, plus, for a host or
+    /// domain, every other address the app tried whose name it covers.
+    /// </summary>
+    public List<string> AddressesFor(RuleDestination destination, string chosen)
+    {
+        var list = new List<string> { chosen };
+        if (destination.Scope != RuleScope.Address)
+            list.AddRange(_destinations.Where(d => d.HostName != null && destination.Matches(d.HostName)).Select(d => d.Address));
+        return list.Distinct().ToList();
+    }
+
+    public int PortFor(string address) => _destinations.FirstOrDefault(d => d.Address == address)?.Port ?? RemotePort;
 
     DateTime? _snoozedUntil;
 
@@ -94,25 +181,31 @@ public sealed class PendingRequest : INotifyPropertyChanged
 
     public bool IsSnoozed => SnoozedUntil > DateTime.Now;
 
-    public string DeferredText => SnoozedUntil is { } until
-        ? $"Asks again at {until:t} if it's running"
+    public string DeferredText => QuietDeferred ? "Quiet mode · asks when it ends, if it's running"
+        : SnoozedUntil is { } until ? $"Asks again at {until:t} if it's running"
         : "Asks again when it next connects";
 
     public void Update(BlockedConnection c)
     {
         Attempts++;
         ProcessId = c.ProcessId;
-        if (c.RemoteAddress != RemoteAddress) HostName = null;
+        if (_addressesSeen.Count < MaxAddressesCounted) _addressesSeen.Add(c.RemoteAddress);
+        var seen = _destinations.FirstOrDefault(d => d.Address == c.RemoteAddress);
+        if (seen == null && _destinations.Count < MaxDestinations) _destinations.Add(seen = new SeenDestination(c.RemoteAddress));
+        if (seen != null) seen.Port = c.RemotePort;
+        if (c.RemoteAddress != RemoteAddress) HostName = seen?.HostName;
         RemoteAddress = c.RemoteAddress;
         RemotePort = c.RemotePort;
         ProtocolName = c.ProtocolName;
         Changed();
     }
 
+    /// <summary>The name found for an address the app tried (looked up in the background).</summary>
     public void SetHostName(string address, string? name)
     {
-        if (address != RemoteAddress || string.IsNullOrEmpty(name)) return;
-        HostName = name;
+        if (string.IsNullOrEmpty(name)) return;
+        if (_destinations.FirstOrDefault(d => d.Address == address) is { } seen) seen.HostName = name;
+        if (address == RemoteAddress) HostName = name;
         Changed();
     }
 
@@ -164,6 +257,15 @@ public sealed class RuleRow
     public bool IsAllow => Rule?.Allow ?? SignedCopy!.Allow;
     public string Action => IsAllow ? "Allow" : "Block";
     public string Kind => SignedCopy != null ? "Installer / updater" :Rule!.IsWindowsAuto ? "Windows (automatic)" : "Your decision";
+    /// <summary>Why the Edit button is off for this row; null when it can be edited.</summary>
+    public string? CannotEditReason =>
+        SignedCopy != null ? "Installer and updater rules can only be switched between Allow and Block."
+        : IsMissing ? "This program is no longer on this PC, so the rule does nothing."
+        : Rule!.Destination == null && Rule.IsScoped ? "This rule only covers some connections (certain ports or protocols), which PacketHound can't edit."
+        : null;
+
+    public bool CanEdit => CannotEditReason == null;
+
     public string AppliesTo => Rule == null ? "Any connection"
         : Rule.Destination?.Label ?? (Rule.IsScoped ? "Some connections" : "Any connection");
     public DateTime? CreatedDate => Rule?.Created ?? SignedCopy!.Created;
@@ -173,7 +275,8 @@ public sealed class RuleRow
         : IsMissing ? "Program not found"
         : Program == ProgramState.DriveUnavailable ? "Drive not connected"
         : !Rule.Enabled ? "Disabled"
-        : Rule.IsTemporary ? "Until app quits" : "";
+        : Rule.IsTemporary ? "Until app quits"
+        : Rule.Expires is { } expires ? $"Until {TimeText.When(expires)}" : "";
 
     public string? StateTip => Program switch
     {

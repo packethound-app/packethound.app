@@ -1,6 +1,30 @@
 # Changelog
 
-## 1.2.0
+## 1.3.0
+
+- **Edit rules**: an **Edit…** button on the Rules tab (or double-click a rule) changes a rule's action and what
+  it applies to (any connection, one IP address, one host or a whole domain), and can make a temporary or
+  timed rule permanent.
+- **Every destination in the prompt**: when an app tries several addresses before you answer (a browser such as
+  Tor does), each one is listed under *Applies to*, not just the latest, and your choice stays put as new ones
+  arrive.
+- **Copy from the prompt**: a Copy link and a right-click menu copy the IP address, host name, program path or
+  command line. Activity's right-click menu can copy the host name too.
+- **Allow or block for a set time**: besides *Forever* and *Until the app quits*, a rule can last **for 1 hour**
+  or **for the rest of today**. It's removed when the time is up, even if PacketHound was closed meanwhile.
+- **Updates that move to a new folder** (for example `app-1.2.3\` → `app-1.2.4\`) are recognised: the prompt
+  says it looks like an update and offers **Same as before**, which copies your rules to the new version. If
+  the new version is signed by someone else, it asks you to decide again instead.
+- **Command line** for PowerShell, cmd, script interpreters (Python, Node, Java and others) and download tools,
+  so you can see which script or download is behind the connection.
+- **Quiet mode** for 30 minutes, 1 hour, 3 hours or until you turn it off (main window or tray menu): new apps
+  are blocked without a prompt and listed under *Waiting for your decision*, and you're asked about the ones
+  still running when it ends.
+- **Activity is kept across restarts**, for 1 day by default (Settings › Activity: this session only, 1, 7 or
+  30 days). It now shows up to 5,000 entries, and **Clear** deletes the saved copy too.
+- **ARM64**: a native installer for Windows on ARM (`PacketHound-Setup-<version>-arm64.exe`).
+
+## 1.2.0 (2026-11-06)
 
 - **Decide later** now has a home: apps you put off are listed on the Rules tab under *Waiting for your
   decision*, with a **Decide…** button to bring the prompt back. They stay blocked until you decide.

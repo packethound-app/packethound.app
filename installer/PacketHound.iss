@@ -1,9 +1,27 @@
 ; PacketHound installer (Inno Setup 7). Build it with:  .\build.ps1 -Installer
-; Packages the self-contained publish\installer\PacketHound.exe into publish\PacketHound-Setup-<version>.exe.
+; Compiled once per architecture (build.ps1 passes /DArch=x64 or /DArch=arm64). Packages the self-contained
+; publish\installer\<arch>\PacketHound.exe into
+;   x64:   publish\PacketHound-Setup-<version>.exe
+;   arm64: publish\PacketHound-Setup-<version>-arm64.exe
+; Both share the AppId, folder and exe name, so either one upgrades an install made by the other.
 
-#define ExePath AddBackslash(SourcePath) + "..\publish\installer\PacketHound.exe"
+#ifndef Arch
+  #define Arch "x64"
+#endif
+#if Arch == "x64"
+  #define ArchFilter "x64compatible"
+  #define ArchSuffix ""
+#elif Arch == "arm64"
+  #define ArchFilter "arm64"
+  #define ArchSuffix "-arm64"
+#else
+  #error Arch must be x64 or arm64.
+#endif
+
+#define ExeSource "..\publish\installer\" + Arch + "\PacketHound.exe"
+#define ExePath AddBackslash(SourcePath) + ExeSource
 #if !FileExists(ExePath)
-  #error publish\installer\PacketHound.exe not found. Run .\build.ps1 -Installer instead of compiling this script directly.
+  #error publish\installer\<arch>\PacketHound.exe not found. Run .\build.ps1 -Installer instead of compiling this script directly.
 #endif
 #define VerMajor
 #define VerMinor
@@ -25,8 +43,9 @@ DisableDirPage=yes
 DefaultGroupName=PacketHound
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+; x64compatible also lets the x64 installer run on Windows 11 on ARM (the app then runs emulated).
+ArchitecturesAllowed={#ArchFilter}
+ArchitecturesInstallIn64BitMode={#ArchFilter}
 MinVersion=10.0.17763
 WizardStyle=modern dynamic
 ; Icons and wizard images are generated from the logo by tools\make-icons.py.
@@ -37,7 +56,7 @@ WizardImageAlphaFormat=defined
 UninstallDisplayIcon={app}\PacketHound.exe
 UninstallDisplayName=PacketHound
 OutputDir=..\publish
-OutputBaseFilename=PacketHound-Setup-{#AppVersion}
+OutputBaseFilename=PacketHound-Setup-{#AppVersion}{#ArchSuffix}
 Compression=lzma2
 SolidCompression=yes
 ; Setup closes a running PacketHound itself (see PrepareToInstall), so skip Restart Manager's prompt.
@@ -51,7 +70,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 ; Add "sign" to Flags once SignTool is set, so the app itself is signed too.
-Source: "..\publish\installer\PacketHound.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ExeSource}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\PacketHound"; Filename: "{app}\PacketHound.exe"

@@ -29,20 +29,28 @@
         </DockPanel>
 
         <!-- Where -->
-        <Border Grid.Row="1" Margin="0,18,0,0" Padding="14,12" Background="{StaticResource Surface}" CornerRadius="8">
-            <StackPanel>
-                <TextBlock Text="{Binding DestinationTitle}" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Ink}" TextWrapping="Wrap"/>
-                <TextBlock Text="{Binding DestinationDetail}" Foreground="{StaticResource Muted}" Margin="0,3,0,0" TextWrapping="Wrap"/>
-            </StackPanel>
+        <Border Grid.Row="1" Margin="0,18,0,0" Padding="14,12" Background="{StaticResource Surface}" CornerRadius="8"
+                MouseRightButtonUp="CopyArea_RightClick">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Margin="12,2,0,0" FontSize="12" VerticalAlignment="Top">
+                    <Hyperlink x:Name="CopyLink" Click="CopyLink_Click" Foreground="{StaticResource Muted}"
+                               ToolTip="Copy the IP address, host name or program path"><Run x:Name="CopyRun" Text="Copy"/></Hyperlink>
+                </TextBlock>
+                <StackPanel>
+                    <TextBlock Text="{Binding DestinationTitle}" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Ink}" TextWrapping="Wrap"/>
+                    <TextBlock Text="{Binding DestinationDetail}" Foreground="{StaticResource Muted}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+            </DockPanel>
         </Border>
 
         <!-- Details -->
-        <Grid Grid.Row="2" Margin="2,14,0,0">
+        <Grid Grid.Row="2" Margin="2,14,0,0" Background="Transparent" MouseRightButtonUp="CopyArea_RightClick">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" SharedSizeGroup="Label"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -56,13 +64,31 @@
             <TextBlock Style="{StaticResource Value}" Grid.Row="2" Grid.Column="1" Text="{Binding ProcessText}"/>
             <TextBlock Style="{StaticResource Label}" Grid.Row="3" Text="Status"/>
             <TextBlock Style="{StaticResource Value}" Grid.Row="3" Grid.Column="1" Text="{Binding AttemptsText}"/>
+            <!-- Script hosts and interpreters: which script or download is behind the connection -->
+            <TextBlock x:Name="CommandLabel" Style="{StaticResource Label}" Grid.Row="4" Text="Command" Visibility="Collapsed"/>
+            <TextBox x:Name="CommandBox" Grid.Row="4" Grid.Column="1" Margin="0,3" Padding="0" Visibility="Collapsed"
+                     Text="{Binding CommandLineText, Mode=OneWay}" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                     Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                     MaxHeight="96" VerticalScrollBarVisibility="Auto"/>
         </Grid>
 
-        <!-- Temporary-folder hint -->
-        <Border x:Name="TempNote" Grid.Row="3" Margin="0,12,0,0" Padding="12,8" CornerRadius="6"
-                Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" Visibility="Collapsed">
-            <TextBlock x:Name="TempText" Foreground="{StaticResource Ink}" TextWrapping="Wrap"/>
-        </Border>
+        <StackPanel Grid.Row="3">
+            <!-- Temporary-folder hint -->
+            <Border x:Name="TempNote" Margin="0,12,0,0" Padding="12,8" CornerRadius="6"
+                    Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" Visibility="Collapsed">
+                <TextBlock x:Name="TempText" Foreground="{StaticResource Ink}" TextWrapping="Wrap"/>
+            </Border>
+
+            <!-- An earlier version of this app (in another versioned folder) has rules -->
+            <Border x:Name="PreviousNote" Margin="0,12,0,0" Padding="12,10" CornerRadius="6"
+                    Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" Visibility="Collapsed">
+                <DockPanel>
+                    <Button x:Name="SameAsBeforeButton" DockPanel.Dock="Right" Content="Same as before" Style="{StaticResource PrimaryButton}"
+                            Margin="12,0,0,0" VerticalAlignment="Center" Click="SameAsBefore_Click"/>
+                    <TextBlock x:Name="PreviousText" Foreground="{StaticResource Ink}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+        </StackPanel>
 
         <!-- Rule options -->
         <Grid Grid.Row="4" Margin="2,12,0,0">
@@ -75,11 +101,14 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <TextBlock Style="{StaticResource Label}" Text="Applies to" VerticalAlignment="Center"/>
-            <ComboBox x:Name="ScopeBox" Grid.Column="1" Margin="0,3" Padding="8,5" SelectionChanged="Options_Changed"/>
+            <ComboBox x:Name="ScopeBox" Grid.Column="1" Margin="0,3" Padding="8,5" SelectionChanged="Options_Changed"
+                      DropDownClosed="Scope_DropDownClosed" MaxDropDownHeight="320"/>
             <TextBlock x:Name="DurationLabel" Style="{StaticResource Label}" Grid.Row="1" Text="Duration" VerticalAlignment="Center"/>
             <ComboBox x:Name="DurationBox" Grid.Row="1" Grid.Column="1" Margin="0,3" Padding="8,5" SelectionChanged="Options_Changed">
                 <ComboBoxItem Content="Forever" IsSelected="True"/>
                 <ComboBoxItem x:Name="UntilQuitItem" Content="Until the app quits"/>
+                <ComboBoxItem x:Name="HourItem" Content="For 1 hour"/>
+                <ComboBoxItem x:Name="TodayItem" Content="For the rest of today"/>
             </ComboBox>
         </Grid>
 

@@ -61,6 +61,10 @@ public partial class MainWindow : Window
         StoreAppsAsWindows.IsChecked = _controller.Settings.TreatMicrosoftStoreAppsAsWindows;
         AskForTools.IsChecked = _controller.Settings.AskForScriptingTools;
         CheckForUpdates.IsChecked = _controller.Settings.CheckForUpdates;
+        // A value set by hand in settings.json that isn't in the list shows as the nearest longer choice.
+        var keepDays = _controller.Settings.ActivityKeepDays;
+        ActivityKeepBox.SelectedItem = ActivityKeepBox.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => int.Parse((string)i.Tag) >= keepDays) ?? ActivityKeepBox.Items[^1];
         UpdateUpdates();
         try { StartAtLogon.IsChecked = AutoStart.IsEnabled(); } catch { StartAtLogon.IsChecked = false; }
         UpdateStatus();
@@ -125,6 +129,15 @@ public partial class MainWindow : Window
         ToggleButton.Content = on ? "Pause protection ▾" : "Turn protection on";
         ToggleButton.Style = (Style)FindResource(on ? "BaseButton" : "PrimaryButton");
 
+        // Quiet mode only means something while protection is on.
+        var quiet = on && _controller.IsQuiet;
+        QuietButton.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        QuietButton.Content = quiet ? "Stop quiet mode" : "Quiet mode ▾";
+        QuietText.Visibility = quiet ? Visibility.Visible : Visibility.Collapsed;
+        if (quiet)
+            QuietText.Text = (_controller.QuietUntil is { } q && q != DateTime.MaxValue ? $"Quiet mode until {TimeText.When(q)}" : "Quiet mode is on")
+                             + ": new apps are blocked without asking, and listed so you can decide later.";
+
         var disabled = _controller.DisabledFirewallProfiles();
         var error = _controller.LastError;
         if (disabled.Count > 0)
@@ -167,6 +180,23 @@ public partial class MainWindow : Window
         {
             var item = new MenuItem { Header = label };
             item.Click += (_, _) => ChangeProtection(() => _controller.PauseProtection(duration));
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
+    }
+
+    void Quiet_Click(object sender, RoutedEventArgs e)
+    {
+        if (_controller.IsQuiet)
+        {
+            _controller.StopQuiet();
+            return;
+        }
+        var menu = new ContextMenu { PlacementTarget = QuietButton, Placement = PlacementMode.Bottom };
+        foreach (var (label, duration) in Controller.QuietChoices)
+        {
+            var item = new MenuItem { Header = label };
+            item.Click += (_, _) => _controller.StartQuiet(duration);
             menu.Items.Add(item);
         }
         menu.IsOpen = true;
@@ -326,6 +356,62 @@ public partial class MainWindow : Window
         else FirewallManager.ChangeRuleAction(row.Name, allow);
     }
 
+    void RulesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var rows = RulesGrid.SelectedItems.Cast<RuleRow>().ToList();
+        EditButton.IsEnabled = rows.Count == 1 && rows[0].CanEdit;
+        EditButton.ToolTip = rows.Count switch
+        {
+            0 => "Select a rule to edit.",
+            > 1 => "Select just one rule to edit.",
+            _ => rows[0].CannotEditReason ?? "Change what this rule allows or blocks.",
+        };
+    }
+
+    void Edit_Click(object sender, RoutedEventArgs e)
+    {
+        if (RulesGrid.SelectedItems.Count == 1 && RulesGrid.SelectedItem is RuleRow { CanEdit: true } row) EditRule(row);
+    }
+
+    void RulesGrid_DoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (FindAncestor<CheckBox>(e.OriginalSource) != null) return; // a quick double-click on the Allow/Block switch
+        if (FindAncestor<DataGridRow>(e.OriginalSource)?.Item is RuleRow { CanEdit: true } row) EditRule(row);
+    }
+
+    void EditRule(RuleRow row)
+    {
+        if (row.Rule is not { } listed) return;
+        List<FirewallRuleInfo> appRules;
+        try
+        {
+            appRules = FirewallManager.GetPacketHoundRules()
+                .Where(r => FirewallManager.PathEquals(r.ApplicationName, listed.ApplicationName)).ToList();
+        }
+        catch (Exception ex)
+        {
+            ShowError("Could not read firewall rules", ex);
+            return;
+        }
+        // Read again: the rule may have changed since the list was loaded (in wf.msc, or a new address added).
+        if (appRules.FirstOrDefault(r => r.Name == listed.Name) is not { } rule)
+        {
+            MessageBox.Show(this, "This rule no longer exists.", "PacketHound", MessageBoxButton.OK, MessageBoxImage.Information);
+            LoadRules();
+            return;
+        }
+
+        var dialog = new RuleEditWindow(_controller, rule, appRules) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.SavedRuleName is not { } name) return;
+        // The list was reloaded while saving; select the rule as it is now (its name changes with its destination).
+        if (_rulesView?.Cast<RuleRow>().FirstOrDefault(r => r.Name == name) is { } saved)
+        {
+            RulesGrid.SelectedItems.Clear();
+            RulesGrid.SelectedItem = saved;
+            RulesGrid.ScrollIntoView(saved);
+        }
+    }
+
     void Delete_Click(object sender, RoutedEventArgs e)
     {
         var rows = RulesGrid.SelectedItems.Cast<RuleRow>().ToList();
@@ -348,7 +434,7 @@ public partial class MainWindow : Window
         _controller.NotifyRulesChanged();
     }
 
-    void ClearActivity_Click(object sender, RoutedEventArgs e) => _controller.Activity.Clear();
+    void ClearActivity_Click(object sender, RoutedEventArgs e) => _controller.ClearActivity();
 
     void ActivityGrid_DoubleClick(object sender, MouseButtonEventArgs e)
     {
@@ -370,6 +456,7 @@ public partial class MainWindow : Window
         }
         DecideNowItem.IsEnabled = _controller.IsUndecided(entry.AppPath);
         CopyAddressItem.IsEnabled = entry.RemoteAddress.Length > 0;
+        CopyHostItem.IsEnabled = entry.HostName != null;
     }
 
     void ActivityDecideNow_Click(object sender, RoutedEventArgs e)
@@ -382,13 +469,22 @@ public partial class MainWindow : Window
         if (ActivityGrid.SelectedItem is ActivityEntry entry) CopyAddress(entry);
     }
 
+    void ActivityCopyHost_Click(object sender, RoutedEventArgs e)
+    {
+        if (ActivityGrid.SelectedItem is ActivityEntry { HostName: { } host }) CopyText(host);
+    }
+
     void CopyAddress(ActivityEntry entry)
     {
-        if (entry.RemoteAddress.Length == 0) return;
+        if (entry.RemoteAddress.Length > 0) CopyText(entry.RemoteAddress);
+    }
+
+    void CopyText(string text)
+    {
         try
         {
-            Clipboard.SetText(entry.RemoteAddress);
-            CopiedText.Text = $"Copied {entry.RemoteAddress}";
+            Clipboard.SetText(text);
+            CopiedText.Text = $"Copied {text}";
         }
         catch (Exception ex)
         {
@@ -441,6 +537,11 @@ public partial class MainWindow : Window
     {
         try { UpdateService.OpenDownloadPage(); }
         catch (Exception ex) { ShowError("Could not open the download page", ex); }
+    }
+
+    void ActivityKeep_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (ActivityKeepBox.SelectedItem is ComboBoxItem { Tag: string days }) _controller.SetActivityKeepDays(int.Parse(days));
     }
 
     void CheckForUpdates_Click(object sender, RoutedEventArgs e)

@@ -14,6 +14,8 @@ public sealed class TrayIcon : IDisposable
     readonly WinForms.ToolStripMenuItem _resumeItem;
     readonly WinForms.ToolStripMenuItem _updateItem;
     readonly WinForms.ToolStripMenuItem _deferredItem;
+    readonly WinForms.ToolStripMenuItem _quietItem;
+    readonly WinForms.ToolStripMenuItem _quietOffItem;
     Action? _balloonClick; // what clicking the current notification does (error notifications do nothing)
     readonly Action _openMain;
     readonly Action _openDeferred;
@@ -36,11 +38,20 @@ public sealed class TrayIcon : IDisposable
         foreach (var (label, duration) in Controller.PauseChoices)
             _pauseItem.DropDownItems.Add(new WinForms.ToolStripMenuItem(label, null, (_, _) => Change(() => _controller.PauseProtection(duration))));
         _resumeItem = new WinForms.ToolStripMenuItem("Turn protection on", null, (_, _) => Change(_controller.EnableProtection));
+        _quietItem = new WinForms.ToolStripMenuItem("Quiet mode (don't ask)")
+        {
+            ToolTipText = "New apps stay blocked without asking, and are listed so you can decide later.",
+        };
+        foreach (var (label, duration) in Controller.QuietChoices)
+            _quietItem.DropDownItems.Add(new WinForms.ToolStripMenuItem(label, null, (_, _) => Change(() => _controller.StartQuiet(duration))));
+        _quietOffItem = new WinForms.ToolStripMenuItem("Stop quiet mode", null, (_, _) => Change(_controller.StopQuiet));
         _updateItem = new WinForms.ToolStripMenuItem("", null, (_, _) => OpenDownloadPage()) { Visible = false };
         _deferredItem = new WinForms.ToolStripMenuItem("", null, (_, _) => _openDeferred()) { Visible = false };
         menu.Items.Add(open);
         menu.Items.Add(_deferredItem);
         menu.Items.Add(_updateItem);
+        menu.Items.Add(_quietItem);
+        menu.Items.Add(_quietOffItem);
         menu.Items.Add(_pauseItem);
         menu.Items.Add(_resumeItem);
         menu.Items.Add(new WinForms.ToolStripSeparator());
@@ -102,6 +113,10 @@ public sealed class TrayIcon : IDisposable
         _icon.Icon = on ? _onIcon : _pausedIcon;
         var text = on ? "PacketHound · protection on"
             : _controller.PausedUntil is { } until ? $"PacketHound · paused until {until:t}" : "PacketHound · paused";
+        var quiet = on && _controller.IsQuiet;
+        if (quiet) text += " · quiet";
+        _quietItem.Visible = on && !quiet;
+        _quietOffItem.Visible = quiet;
         var waiting = _controller.PendingCount + _controller.Deferred.Count;
         if (waiting > 0) text += $" · {waiting} waiting";
         _icon.Text = text.Length > 63 ? text[..63] : text;

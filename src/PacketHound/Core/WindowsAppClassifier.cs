@@ -52,6 +52,23 @@ public sealed class WindowsAppClassifier
         "csc.exe", "vbc.exe", "jsc.exe", "msiexec.exe", "ssh.exe", "scp.exe", "sftp.exe",
     };
 
+    /// <summary>
+    /// Programs whose command line says more than their path: the tools above plus script interpreters. The prompt
+    /// shows the command line for these, which tells you which script or download is behind the connection.
+    /// </summary>
+    public static bool ShowsCommandLine(string path)
+    {
+        var file = Path.GetFileName(path);
+        return ScriptingTools.Contains(file) || Interpreters.Contains(file);
+    }
+
+    static readonly HashSet<string> Interpreters = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "pwsh.exe", "python.exe", "pythonw.exe", "py.exe", "pyw.exe", "node.exe", "deno.exe", "bun.exe",
+        "java.exe", "javaw.exe", "ruby.exe", "rubyw.exe", "perl.exe", "php.exe", "bash.exe", "sh.exe", "wsl.exe",
+        "dotnet.exe",
+    };
+
     // NT SERVICE\TrustedInstaller. Service SIDs are derived from the service name, so this is the same everywhere.
     static readonly SecurityIdentifier TrustedInstaller =
         new("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464");

@@ -25,7 +25,8 @@ namespace PacketHound.Core;
 /// </summary>
 public sealed class Controller
 {
-    const int MaxActivity = 1000;
+    // Entries shown in the Activity list (more can be in the saved file when keeping it for days).
+    const int MaxActivity = 5000;
     static readonly TimeSpan SnapshotLifetime = TimeSpan.FromSeconds(5);
 
     /// <summary>Windows binaries pre-allowed when protection is turned on, so core services never stall.</summary>
@@ -62,6 +63,12 @@ public sealed class Controller
     readonly TempFolderWatcher _tempWatcher = new();
     readonly HashSet<string> _preparing = new(StringComparer.OrdinalIgnoreCase);
     readonly DispatcherTimer _temporaryTimer;
+    // Fires when the next timed rule ("for 1 hour") ends, and when quiet mode ends.
+    readonly DispatcherTimer _expiryTimer;
+    readonly DispatcherTimer _quietTimer;
+    // Saves the Activity list, so it survives a restart.
+    readonly ActivityLog _activityLog = new();
+    readonly DispatcherTimer _activityTimer;
     RuleSnapshot? _snapshot;
     PromptWindow? _prompt;
 
@@ -78,6 +85,12 @@ public sealed class Controller
         _deferredTimer.Tick += (_, _) => CheckDeferred();
         _resumeTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromSeconds(5) };
         _resumeTimer.Tick += (_, _) => CheckResume();
+        _expiryTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher);
+        _expiryTimer.Tick += (_, _) => CheckExpiredRules();
+        _quietTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher);
+        _quietTimer.Tick += (_, _) => CheckQuiet();
+        _activityTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromSeconds(5) };
+        _activityTimer.Tick += (_, _) => _activityLog.Flush();
 
         _monitor.Blocked += c => _dispatcher.InvokeAsync(() => OnBlocked(c));
         _tempWatcher.ExeAppeared += path => _dispatcher.InvokeAsync(() => OnTempExeAppeared(path));
@@ -103,6 +116,23 @@ public sealed class Controller
         ("Until I turn it back on", null),
     };
 
+    /// <summary>The lengths offered for quiet mode. Null: until turned off.</summary>
+    public static readonly (string Label, TimeSpan? Duration)[] QuietChoices =
+    {
+        ("For 30 minutes", TimeSpan.FromMinutes(30)),
+        ("For 1 hour", TimeSpan.FromHours(1)),
+        ("For 3 hours", TimeSpan.FromHours(3)),
+        ("Until I turn it off", null),
+    };
+
+    /// <summary>
+    /// Quiet mode: new apps stay blocked without a prompt and go on the "decide later" list, until this time
+    /// (DateTime.MaxValue: until turned off). Null when off. Not kept across restarts.
+    /// </summary>
+    public DateTime? QuietUntil { get; private set; }
+
+    public bool IsQuiet => QuietUntil is { } until && until > DateTime.Now;
+
     public IReadOnlyList<SignedCopyRule> SignedCopyRules => Settings.SignedCopyRules;
 
     /// <summary>Apps the user chose to decide later about. They stay blocked until decided.</summary>
@@ -122,8 +152,12 @@ public sealed class Controller
 
     public void Start()
     {
+        // The saved list first, so this session's entries go on top of it.
+        foreach (var entry in _activityLog.Load(Settings.ActivityKeepDays, MaxActivity)) Activity.Insert(0, entry);
+        _activityTimer.Start();
         Updates.Start();
         RemoveAllTemporaryRules("left over from the last session");
+        CheckExpiredRules(); // ended while PacketHound wasn't running, and schedules the next
         if (!Settings.ProtectionEnabled)
         {
             // A timed pause that was running when PacketHound closed (or the PC restarted).
@@ -153,6 +187,25 @@ public sealed class Controller
         ClearPending();
         if (_temporaryApps.Count > 0) RemoveAllTemporaryRules("PacketHound is exiting");
         ReleaseAllLocks();
+        _activityTimer.Stop();
+        _activityLog.Flush(all: true);
+    }
+
+    /// <summary>Empties the Activity list, the saved copy included.</summary>
+    public void ClearActivity()
+    {
+        Activity.Clear();
+        _activityLog.Clear();
+    }
+
+    /// <summary>How many days the Activity list is kept across restarts (0: this session only).</summary>
+    public void SetActivityKeepDays(int days)
+    {
+        if (days == Settings.ActivityKeepDays) return;
+        Settings.ActivityKeepDays = days;
+        SaveSettings();
+        _activityLog.SetKeepDays(days);
+        Log.Info(days == 0 ? "Activity kept for this session only" : $"Activity kept for {days} day(s)");
     }
 
     // ---------------------------------------------------------------- protection on/off
@@ -294,6 +347,17 @@ public sealed class Controller
         // Temporary rules can't stay behind even when keeping rules: nothing would be left to remove them.
         // (The uninstaller closes a running PacketHound by force, so its own clean-up doesn't run.)
         RemoveAllTemporaryRules("restoring Windows defaults");
+        // Timed rules too: with PacketHound gone, nothing would remove them when their time is up.
+        try
+        {
+            var timed = FirewallManager.RemoveTimedRules(upTo: null);
+            if (timed.Count > 0) Log.Info($"Removed {timed.Count} timed rule(s): restoring Windows defaults");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not remove timed rules", ex);
+        }
+        _expiryTimer.Stop();
         ReleaseAllLocks();
         var removed = removeRules ? FirewallManager.RemoveAllPacketHoundRules() : 0;
         if (removeRules) Settings.SignedCopyRules.Clear();
@@ -419,11 +483,19 @@ public sealed class Controller
         // Already undecided: update the details. A deferred app whose wait is over is asked about again.
         if (_pending.TryGetValue(path, out var waiting))
         {
+            var previousProcess = waiting.ProcessId;
             waiting.Update(c);
             LookUpHostName(waiting);
+            if (waiting.ShowsCommandLine && waiting.ProcessId != previousProcess) LookUpCommandLine(waiting);
             if (waiting.IsSnoozed)
             {
-                AddActivity(c, app, "Blocked · you chose to decide later");
+                AddActivity(c, app, waiting.QuietDeferred ? QuietResult : "Blocked · you chose to decide later");
+                return;
+            }
+            if (!_queue.Contains(waiting) && IsQuiet)
+            {
+                DeferQuietly(waiting);
+                AddActivity(c, app, QuietResult);
                 return;
             }
             AddActivity(c, app, "Blocked · waiting for your decision");
@@ -483,12 +555,47 @@ public sealed class Controller
             if (!Settings.ProtectionEnabled || _pending.ContainsKey(path)) return; // paused, or asked about meanwhile
         }
 
-        var request = new PendingRequest(app, c);
+        var request = new PendingRequest(app, c) { PreviousVersion = FindPreviousVersion(path) };
         _pending[path] = request;
         LookUpHostName(request);
         LookUpSigner(request);
+        if (request.ShowsCommandLine) LookUpCommandLine(request);
+        if (IsQuiet)
+        {
+            DeferQuietly(request);
+            AddActivity(c, app, QuietResult);
+            return;
+        }
         AddActivity(c, app, "Blocked · waiting for your decision");
         Ask(request);
+    }
+
+    const string QuietResult = "Blocked · quiet mode, listed to decide later";
+
+    PreviousVersion? FindPreviousVersion(string path)
+    {
+        try
+        {
+            return ProgramVersions.Find(Rules(), path);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Could not look for an earlier version of {path}", ex);
+            return null;
+        }
+    }
+
+    async void LookUpCommandLine(PendingRequest request)
+    {
+        var pid = request.ProcessId;
+        try
+        {
+            request.SetCommandLine(pid, await Task.Run(() => RunningPrograms.CommandLine(pid)));
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Could not read the command line of process {pid}", ex);
+        }
     }
 
     /// <summary>Quick name check before the (slower) signature check: a temp-folder file named like a remembered installer.</summary>
@@ -700,6 +807,7 @@ public sealed class Controller
     void Ask(PendingRequest request, bool next = false)
     {
         Deferred.Remove(request);
+        request.QuietDeferred = false;
         request.SnoozedUntil = null;
         // While a prompt is open, it shows _queue[0].
         if (next) _queue.Insert(_prompt != null && _queue.Count > 0 ? 1 : 0, request);
@@ -757,8 +865,9 @@ public sealed class Controller
                 Log.Error($"Could not check whether {request.AppPath} is running", ex);
                 running = false;
             }
-            if (running) Ask(request);
-            else request.SnoozedUntil = null;
+            if (!running) request.SnoozedUntil = null;
+            else if (IsQuiet) DeferQuietly(request);
+            else Ask(request);
         }
         if (!Deferred.Any(r => r.SnoozedUntil != null)) _deferredTimer.Stop();
     }
@@ -792,20 +901,7 @@ public sealed class Controller
     /// <summary>Adds the addresses a host or domain resolves to now, so the first connections don't have to be blocked.</summary>
     async void AddResolvedAddresses(string ruleName, RuleDestination destination, string? hostName)
     {
-        var addresses = new List<string>();
-        foreach (var name in new[] { destination.Target, hostName }.OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var lookup = Dns.GetHostAddressesAsync(name);
-                if (await Task.WhenAny(lookup, Task.Delay(3000)) == lookup && lookup.IsCompletedSuccessfully)
-                    addresses.AddRange(lookup.Result.Select(a => a.ToString()));
-            }
-            catch
-            {
-                // Doesn't resolve; addresses get added as the app connects.
-            }
-        }
+        var addresses = await ResolveAsync(new[] { destination.Target, hostName }.OfType<string>());
         try
         {
             if (addresses.Count > 0 && FirewallManager.AddRemoteAddresses(ruleName, addresses)) NotifyRulesChanged();
@@ -814,6 +910,26 @@ public sealed class Controller
         {
             Log.Error($"Could not add resolved addresses to rule '{ruleName}'", ex);
         }
+    }
+
+    /// <summary>The addresses these names resolve to now (each lookup gives up after 3 s). Names that don't resolve add nothing.</summary>
+    static async Task<List<string>> ResolveAsync(IEnumerable<string> names)
+    {
+        var lookups = names.Distinct(StringComparer.OrdinalIgnoreCase).Select(async name =>
+        {
+            try
+            {
+                var lookup = Dns.GetHostAddressesAsync(name);
+                if (await Task.WhenAny(lookup, Task.Delay(3000)) == lookup && lookup.IsCompletedSuccessfully)
+                    return lookup.Result.Select(a => a.ToString()).ToList();
+            }
+            catch
+            {
+                // Doesn't resolve; addresses get added as the app connects.
+            }
+            return new List<string>();
+        });
+        return (await Task.WhenAll(lookups)).SelectMany(a => a).Distinct().ToList();
     }
 
     async void LookUpHostName(PendingRequest request)
@@ -841,14 +957,16 @@ public sealed class Controller
         prompt.Closed += (_, _) =>
         {
             _prompt = null;
-            Decide(request, prompt.Decision, prompt.Scope, prompt.UntilQuit);
+            Decide(request, prompt.Decision, prompt.Scope, prompt.UntilQuit, prompt.Expires);
             ShowNextPrompt();
         };
         _prompt = prompt;
         prompt.Show();
     }
 
-    void Decide(PendingRequest request, PromptDecision decision, ScopeOption? scope, bool untilQuit)
+    /// <param name="untilQuit">The rule is removed when the app quits.</param>
+    /// <param name="expires">The rule is removed at this time ("for 1 hour").</param>
+    void Decide(PendingRequest request, PromptDecision decision, ScopeOption? scope, bool untilQuit, DateTime? expires)
     {
         if (decision == PromptDecision.Dismiss) return;
 
@@ -867,30 +985,42 @@ public sealed class Controller
         _pending.Remove(request.AppPath);
         switch (decision)
         {
+            case PromptDecision.SameAsBefore when request.PreviousVersion is { } previous:
+                ApplyPreviousVersion(request, previous);
+                break;
+
             case PromptDecision.Allow:
             case PromptDecision.Block:
                 var allow = decision == PromptDecision.Allow;
                 var destination = scope?.Destination;
+                // Recorded so a later version of the app (in a new folder) can be recognised as the same publisher's.
+                var note = FirewallManager.SignerNote(request.Signer);
                 try
                 {
                     if (destination == null)
                     {
-                        FirewallManager.SetAppRule(request.AppPath, request.DisplayName, allow, windowsComponent: false, temporary: untilQuit);
+                        FirewallManager.SetAppRule(request.AppPath, request.DisplayName, allow, windowsComponent: false, temporary: untilQuit,
+                            note: note, expires: expires);
                     }
                     else
                     {
+                        // The destination picked can be any the app tried, not just the latest attempt.
                         var ruleName = FirewallManager.SetDestinationRule(request.AppPath, request.DisplayName, allow, destination,
-                            new[] { scope!.Address }, untilQuit);
+                            request.AddressesFor(destination, scope!.Address), untilQuit, expires, note);
                         if (destination.Scope != RuleScope.Address) AddResolvedAddresses(ruleName, destination, scope.HostName);
                     }
                     if (untilQuit) TrackTemporary(request.AppPath);
+                    if (expires != null) CheckExpiredRules();
                     _justDecided[request.AppPath] = DateTime.UtcNow;
                     InvalidateRules();
                     var what = destination == null ? "this app" : destination.Label;
+                    var address = destination == null ? request.RemoteAddress : scope!.Address;
+                    var lifetime = untilQuit ? " until it quits" : expires is { } e ? $" until {TimeText.When(e)}" : "";
                     AddActivity(new BlockedConnection
                     {
-                        RemoteAddress = request.RemoteAddress, RemotePort = request.RemotePort, ProcessId = request.ProcessId,
-                    }, request.App, $"You {(allow ? "allowed" : "blocked")} {what}{(untilQuit ? " until it quits" : "")}", request.HostName);
+                        RemoteAddress = address, RemotePort = request.PortFor(address), ProcessId = request.ProcessId,
+                    }, request.App, $"You {(allow ? "allowed" : "blocked")} {what}{lifetime}",
+                        destination == null ? request.HostName : scope!.HostName);
                     if (request.InTempFolder)
                     {
                         // Installers and updaters unpack to a new temp folder each run: a signed one you allow is
@@ -912,7 +1042,142 @@ public sealed class Controller
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// "Same as before": gives the app the rules its earlier version had. If the earlier version is gone from
+    /// this PC, its rules are removed (they've moved); if it's still installed, they stay.
+    /// </summary>
+    void ApplyPreviousVersion(PendingRequest request, PreviousVersion previous)
+    {
+        try
+        {
+            var note = FirewallManager.SignerNote(request.Signer);
+            // A whole-app rule replaces the app's other rules, so it goes first.
+            foreach (var rule in previous.Rules.OrderBy(r => r.Destination == null ? 0 : 1))
+            {
+                if (rule.Destination is { } destination)
+                    FirewallManager.SetDestinationRule(request.AppPath, request.DisplayName, rule.Allow, destination, rule.Addresses,
+                        temporary: false, note: note);
+                else
+                    FirewallManager.SetAppRule(request.AppPath, request.DisplayName, rule.Allow, windowsComponent: false, note: note);
+            }
+            if (!previous.StillExists)
+                foreach (var rule in previous.Rules) FirewallManager.RemoveRule(rule.Name);
+            _justDecided[request.AppPath] = DateTime.UtcNow;
+            InvalidateRules();
+            Log.Info($"Rules of {previous.Path} {(previous.StillExists ? "copied" : "moved")} to {request.AppPath}");
+            AddActivity(new BlockedConnection
+            {
+                RemoteAddress = request.RemoteAddress, RemotePort = request.RemotePort, ProcessId = request.ProcessId,
+            }, request.App, $"You kept the rules of the earlier version ({previous.FolderName})", request.HostName);
+            RulesChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            NotifyRulesChanged(); // some may have been made
+            SetError($"Could not copy the earlier version's rules to {request.DisplayName}: {ex.Message}", ex);
+            System.Windows.MessageBox.Show(
+                $"PacketHound could not copy the earlier version's rules to {request.DisplayName}.\n\n{ex.Message}",
+                "PacketHound", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+        }
+    }
+
     public void ShowPrompt() => _prompt?.Activate();
+
+    // ---------------------------------------------------------------- quiet mode
+
+    /// <summary>
+    /// Stops asking about new apps for a while: they stay blocked and go on the "decide later" list. Whatever is
+    /// waiting now, the prompt on screen included, goes there too. <paramref name="duration"/> null: until turned off.
+    /// </summary>
+    public void StartQuiet(TimeSpan? duration)
+    {
+        QuietUntil = duration is { } d ? DateTime.Now + d : DateTime.MaxValue;
+        foreach (var request in _queue.ToList()) DeferQuietly(request);
+        _queue.Clear(); // first, so closing the prompt doesn't open the next one
+        ClosePrompt();
+        ScheduleQuietEnd();
+        Log.Info(duration == null ? "Quiet mode on" : $"Quiet mode on until {QuietUntil:HH:mm}");
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Ends quiet mode. Apps put aside by it that are still running are asked about now.</summary>
+    public void StopQuiet()
+    {
+        if (QuietUntil == null) return;
+        QuietUntil = null;
+        _quietTimer.Stop();
+        foreach (var request in Deferred.Where(r => r.QuietDeferred).ToList())
+        {
+            request.QuietDeferred = false;
+            request.SnoozedUntil = DateTime.Now; // due: CheckDeferred asks if it's running
+        }
+        Log.Info("Quiet mode off");
+        CheckDeferred();
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    void DeferQuietly(PendingRequest request)
+    {
+        _queue.Remove(request);
+        request.QuietDeferred = true;
+        request.SnoozedUntil = DateTime.MaxValue; // until quiet mode ends
+        if (!Deferred.Contains(request)) Deferred.Add(request);
+        _deferredTimer.Start();
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    void CheckQuiet()
+    {
+        if (QuietUntil is { } until && until <= DateTime.Now) StopQuiet();
+        else ScheduleQuietEnd();
+    }
+
+    void ScheduleQuietEnd()
+    {
+        _quietTimer.Stop();
+        if (QuietUntil is not { } until || until == DateTime.MaxValue) return;
+        _quietTimer.Interval = ClampWait(until - DateTime.Now);
+        _quietTimer.Start();
+    }
+
+    /// <summary>
+    /// How long a timer waits: at least a second, and at most 10 minutes, so the time is checked again after the
+    /// PC sleeps or its clock changes.
+    /// </summary>
+    static TimeSpan ClampWait(TimeSpan wait) =>
+        wait < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : wait > TimeSpan.FromMinutes(10) ? TimeSpan.FromMinutes(10) : wait;
+
+    // ---------------------------------------------------------------- timed rules ("for 1 hour")
+
+    /// <summary>Removes timed rules whose time is up, and sets the timer for the next one.</summary>
+    void CheckExpiredRules()
+    {
+        _expiryTimer.Stop();
+        try
+        {
+            var expired = FirewallManager.RemoveTimedRules(DateTime.Now);
+            foreach (var rule in expired)
+            {
+                var label = rule.Destination == null ? "" : $" for {rule.Destination.Label}";
+                AddNote(rule.DisplayName, rule.ApplicationName, $"Time's up · {(rule.Allow ? "Allow" : "Block")} rule{label} removed");
+            }
+            if (expired.Count > 0)
+            {
+                Log.Info($"Removed {expired.Count} timed rule(s) whose time was up");
+                NotifyRulesChanged();
+            }
+            var next = FirewallManager.GetPacketHoundRules().Select(r => r.Expires).Where(e => e != null).Min();
+            if (next is not { } n) return;
+            _expiryTimer.Interval = ClampWait(n - DateTime.Now);
+            _expiryTimer.Start();
+        }
+        catch (Exception ex)
+        {
+            SetError("Could not remove timed rules: " + ex.Message, ex);
+            _expiryTimer.Interval = TimeSpan.FromMinutes(1);
+            _expiryTimer.Start();
+        }
+    }
 
     // ---------------------------------------------------------------- "until the app quits" rules
 
@@ -1016,6 +1281,87 @@ public sealed class Controller
 
     public void InvalidateRules() => _snapshot = null;
 
+    /// <summary>
+    /// Applies a change made in the Edit dialog and returns the name of the rule that now holds it.
+    ///   - Same destination: the rule is changed in place (action, and "until it quits" made permanent).
+    ///   - "Any connection": a whole-app rule replaces every rule the app has, as when answering the prompt.
+    ///   - Another destination: the new rule is made first and the old one removed after, so a failure leaves
+    ///     the old rule in place. A rule the app already had for that destination is replaced.
+    /// </summary>
+    public async Task<string> EditRuleAsync(FirewallRuleInfo original, RuleEdit edit)
+    {
+        var path = original.ApplicationName;
+        var app = AppDetails.For(path);
+        var note = FirewallManager.SignerNote(original.Signer);
+        string name;
+        try
+        {
+            if (RuleDestination.Same(original.Destination, edit.Destination))
+            {
+                // Editing an automatic Windows rule makes it the user's decision, even with the same action.
+                if (original.Allow != edit.Allow || original.IsWindowsAuto) FirewallManager.ChangeRuleAction(original.Name, edit.Allow);
+                if (original.IsTemporary && !edit.Temporary || original.Expires != null && edit.Expires == null)
+                    FirewallManager.MakePermanent(original.Name);
+                name = original.Name;
+            }
+            else if (edit.Destination is not { } destination)
+            {
+                name = FirewallManager.SetAppRule(path, app.DisplayName, edit.Allow, windowsComponent: false, temporary: edit.Temporary,
+                    note: note, expires: edit.Expires);
+            }
+            else
+            {
+                var addresses = destination.Scope == RuleScope.Address ? new List<string> { destination.Target } : new List<string>();
+                if (destination.Scope != RuleScope.Address)
+                {
+                    // Widening (a host to its domain, say): the addresses collected so far still belong.
+                    if (original.Destination is { } old && destination.Covers(old)) addresses.AddRange(original.Addresses);
+                    addresses.AddRange(await ResolveAsync(new[] { destination.Target }));
+                    if (addresses.Count == 0)
+                        throw new InvalidOperationException($"No IP addresses were found for {destination.Target}, and Windows Firewall needs at least one. "
+                                                            + "Check the name, or try again once this PC is online.");
+                }
+                var replaced = FirewallManager.GetPacketHoundRules()
+                    .Where(r => FirewallManager.PathEquals(r.ApplicationName, path) && r.Name != original.Name
+                                && RuleDestination.Same(r.Destination, destination))
+                    .ToList();
+                name = FirewallManager.SetDestinationRule(path, app.DisplayName, edit.Allow, destination, addresses, edit.Temporary,
+                    edit.Expires, note);
+                foreach (var r in replaced.Where(r => r.Name != name)) FirewallManager.RemoveRule(r.Name);
+                if (original.Name != name) FirewallManager.RemoveRule(original.Name);
+            }
+        }
+        finally
+        {
+            // Also after a failure part-way, so the list shows what's really there.
+            NotifyRulesChanged();
+        }
+
+        if (edit.Temporary) TrackTemporary(path);
+        CheckExpiredRules(); // the next timed rule may have changed
+        _justDecided[path] = DateTime.UtcNow;
+        var lifetime = edit.Temporary ? " until it quits" : edit.Expires is { } e ? $" until {TimeText.When(e)}" : "";
+        AddActivity(new BlockedConnection(), app,
+            $"You changed the rule · {(edit.Allow ? "allow" : "block")} {edit.Destination?.Label ?? "any connection"}{lifetime}");
+        DropAnsweredRequest(path);
+        return name;
+    }
+
+    /// <summary>
+    /// An app waiting for a decision that now has a whole-app rule (made on the Rules tab) stops waiting,
+    /// unless its prompt is on screen; answering that replaces the rule as usual.
+    /// </summary>
+    void DropAnsweredRequest(string path)
+    {
+        if (!_pending.TryGetValue(path, out var waiting) || !Rules().HasDecision(path)) return;
+        if (_prompt != null && _queue.Count > 0 && _queue[0] == waiting) return;
+        _queue.Remove(waiting);
+        Deferred.Remove(waiting);
+        _pending.Remove(path);
+        ShowNextPrompt(); // updates the "more apps waiting" count
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>Deletes rules whose program is no longer on this PC, noting each in Activity. Returns how many were removed.</summary>
     public int RemoveMissingProgramRules(IEnumerable<FirewallRuleInfo> rules)
     {
@@ -1027,15 +1373,8 @@ public sealed class Controller
                 FirewallManager.RemoveRule(rule.Name);
                 removed++;
                 var label = rule.Destination == null ? "" : $" ({rule.Destination.Label})";
-                Activity.Insert(0, new ActivityEntry
-                {
-                    Time = DateTime.Now,
-                    AppName = rule.DisplayName,
-                    AppPath = rule.ApplicationName,
-                    Result = $"Program no longer exists · rule{label} removed",
-                });
+                AddNote(rule.DisplayName, rule.ApplicationName, $"Program no longer exists · rule{label} removed");
             }
-            while (Activity.Count > MaxActivity) Activity.RemoveAt(Activity.Count - 1);
         }
         finally
         {
@@ -1064,7 +1403,7 @@ public sealed class Controller
                 return;
         }
 
-        Activity.Insert(0, new ActivityEntry
+        Insert(new ActivityEntry
         {
             Time = c.Time,
             AppName = app.DisplayName,
@@ -1075,7 +1414,17 @@ public sealed class Controller
             Result = result,
             HostName = hostName,
         });
+    }
+
+    /// <summary>An Activity entry that isn't about a connection (a rule removed, say).</summary>
+    void AddNote(string appName, string appPath, string result) =>
+        Insert(new ActivityEntry { Time = DateTime.Now, AppName = appName, AppPath = appPath, Result = result });
+
+    void Insert(ActivityEntry entry)
+    {
+        Activity.Insert(0, entry);
         while (Activity.Count > MaxActivity) Activity.RemoveAt(Activity.Count - 1);
+        _activityLog.Add(entry);
     }
 
     void SetError(string message, Exception? ex = null)

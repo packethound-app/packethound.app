@@ -5,7 +5,7 @@ When a third-party app tries to make an outgoing connection for the first time, 
 asks whether to **Allow** or **Block** it. Your answer is saved as a normal **Windows Firewall rule**.
 Windows itself is never prompted for.
 
-**Download:** https://packethound.app (Windows 10 1809+ / Windows 11, 64-bit)
+**Download:** https://packethound.app (Windows 10 1809+ / Windows 11, x64 or ARM64)
 
 <a href="https://www.buymeacoffee.com/Henrys_Cat" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
@@ -27,12 +27,26 @@ PacketHound doesn't use a kernel driver. It builds on Windows Firewall:
        Windows Firewall only matches IP addresses, so PacketHound keeps the rule's address list up to date:
        when the app connects to a new address for that name, the address is added (the app may need to retry once).
 
-     The rule lasts **Forever** or **Until the app quits**. A temporary rule is removed once no process of that
-     program is running, and also when PacketHound exits.
+     If the app tries several destinations before you answer (a browser such as Tor does), each one is listed,
+     and the one you picked stays selected as more arrive.
+
+     The rule lasts **Forever**, **Until the app quits**, **For 1 hour** or **For the rest of today**. A temporary
+     rule is removed once no process of that program is running, and also when PacketHound exits. A timed rule is
+     removed when its time is up, or at PacketHound's next start if it was closed by then.
+
+     **Copy** (or right-click the details) copies the IP address, host name, program path or command line. For
+     PowerShell, cmd, script interpreters (Python, Node, Java, …) and download tools, the prompt also shows the
+     **command line**, so you can see which script or download is behind the connection.
      Connections a destination rule doesn't cover are asked about again.
      **Decide later** keeps it blocked and lists it under *Waiting for your decision* on the Rules tab,
      where you can decide any time. After 10 minutes PacketHound asks again if the app is still running,
      or otherwise the next time it connects.
+
+     **Updates that move to a new folder.** Some apps install each version into a new folder
+     (`app-1.2.3\` → `app-1.2.4\`). When a program's path matches one with rules except for a version-numbered
+     folder, the prompt says *"This looks like an update"* and offers **Same as before**, which copies the old
+     version's rules to the new path (and removes the old ones if that version is gone). If the new version is
+     signed by someone other than the old one, the button isn't offered and you decide again.
 
      **Installers and updaters in temporary folders.** Many unpack themselves into a new random folder under
      `%TEMP%` on every run, so a rule for one copy's path never matches the next. For a program running from a
@@ -48,7 +62,11 @@ PacketHound doesn't use a kernel driver. It builds on Windows Firewall:
      If PacketHound is too late (or it's the very first run, before you've answered), the first connection is
      blocked and many installers give up, so a notification offers to pause protection for 5 minutes in one click.
 
-4. **Pausing.** Protection can be paused for 5 minutes, 15 minutes, 1 hour, or until you turn it back on
+4. **Quiet mode.** For 30 minutes, 1 hour, 3 hours or until you turn it off (main window, or tray icon ›
+   Quiet mode), new apps are blocked **without a prompt** and listed under *Waiting for your decision*. When it
+   ends, PacketHound asks about the ones that are still running. Quiet mode doesn't survive a restart.
+
+5. **Pausing.** Protection can be paused for 5 minutes, 15 minutes, 1 hour, or until you turn it back on
    (tray icon › Pause protection, or the button in the main window). A timed pause turns protection back on
    by itself, also if the PC restarts in the meantime. While paused, apps without a rule can connect; your
    Block rules still apply.
@@ -89,7 +107,8 @@ You need the .NET 10 SDK.
 ```powershell
 .\build.ps1                  # publish\PacketHound.exe (~750 KB); needs the .NET 10 Desktop Runtime
 .\build.ps1 -SelfContained   # larger exe that needs no .NET install
-.\build.ps1 -Installer       # publish\PacketHound-Setup-<version>.exe; also needs Inno Setup 7 (or 6)
+.\build.ps1 -Arch arm64      # the same for Windows on ARM, in publish\arm64
+.\build.ps1 -Installer       # publish\PacketHound-Setup-<version>.exe and ...-<version>-arm64.exe; needs Inno Setup 7 (or 6)
 ```
 
 The installer ([installer/PacketHound.iss](installer/PacketHound.iss)) is self-contained (~65 MB), so the
@@ -110,17 +129,21 @@ Code signing isn't set up yet. The script has commented-out `SignTool` lines to 
    - Left-click opens the waiting prompt if there is one, otherwise the window (on the Rules tab if apps
      are waiting for your decision).
    - Right-click has **Pause protection** (5 minutes, 15 minutes, 1 hour, or until you turn it back on),
-     **Turn protection on**, a link to apps waiting for your decision, and **Exit**.
+     **Quiet mode**, **Turn protection on**, a link to apps waiting for your decision, and **Exit**.
    - The tooltip shows whether protection is on, until when it's paused, and how many apps are waiting.
 4. The main window has three tabs:
    - **Rules**: search, flip a rule between Allow and Block with its switch (green = Allow,
-     red = Block) or the Allow/Block buttons, and delete rules. Apps you chose to decide later about are
+     red = Block) or the Allow/Block buttons, and delete rules. **Edit…** (or double-click a rule) changes its
+     action and what it applies to (any connection, one IP address, one host or a whole domain), and can make a
+     temporary or timed rule permanent. Apps you chose to decide later about are
      listed above the rules under *Waiting for your decision*, each with a **Decide…** button. The
      **Status** column shows temporary and disabled rules, and rules whose program is gone
      (**Program not found**, tinted red; **Remove missing** deletes them). Remembered installers and
      updaters are listed with the type *Installer / updater*.
    - **Activity**: blocked attempts and what happened to each. Double-click a row to copy its IP address;
-     right-click to copy it or to decide about an app that's still waiting.
+     right-click to copy it or the host name, or to decide about an app that's still waiting. The list is kept
+     across restarts for 1 day by default (Settings › Activity: this session only, 1, 7 or 30 days), in
+     `C:\ProgramData\PacketHound\activity.jsonl`; **Clear** empties it.
    - **Settings**, including **Updates**: once a week PacketHound asks https://packethound.app/version.php
      for the latest version number (on by default; untick to stop, or use **Check now**). If there's a newer
      version, the main window, the tray menu and a notification link to the download page. It never
@@ -164,7 +187,8 @@ Prompts appear on top **without taking keyboard focus**, so typing never answers
   fills a little faster. It rotates automatically.
 - **Path-based rules.** A new app version installed into a new folder (some updaters do this)
   is treated as a new program and prompts again; the old rule then shows *Program not found*.
-  Signed installers and updaters in temp folders are the exception (see above). Unsigned ones, or ones
+  If only a version-numbered folder changed, **Same as before** in the prompt copies the rules over (see above);
+  other renamed folders aren't recognised. Signed installers and updaters in temp folders are the exception (see above). Unsigned ones, or ones
   that use a random file name, are asked about every run.
 
 ## Project layout
@@ -181,11 +205,14 @@ src/PacketHound/
   Core/Signature.cs           WinVerifyTrust embedded + catalog signature verification
   Core/TempFolders.cs         temp-folder detection, and the watcher that prepares installer rules
   Core/ProgramPresence.cs     "is this rule's program still installed?" check
+  Core/ProgramVersions.cs     "is this an update of a program in another versioned folder?"
+  Core/ActivityLog.cs         keeps the Activity list across restarts
   Core/DevicePaths.cs         \device\harddiskvolumeN\… → C:\…
   Core/HostNames.cs           IP → hostname via the DNS client cache, then reverse DNS
   Core/AutoStart.cs           Task Scheduler logon task
   UI/PromptWindow.xaml        the Allow / Block prompt
   UI/MainWindow.xaml          rules, activity, settings
+  UI/RuleEditWindow.xaml      the Edit rule dialog
   UI/TrayIcon.cs              notification-area icon
   UI/GridSorting.cs           remembered column sorting
   Assets/logo.png             the logo (main window header); source for every icon
