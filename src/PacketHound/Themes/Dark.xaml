@@ -1,0 +1,33 @@
+<!-- Dark colours: the same keys as Light.xaml. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="Accent" Color="#2563EB"/>
+    <SolidColorBrush x:Key="AccentHover" Color="#3B82F6"/>
+    <SolidColorBrush x:Key="Danger" Color="#DC2626"/>
+    <SolidColorBrush x:Key="DangerHover" Color="#EF4444"/>
+    <SolidColorBrush x:Key="Success" Color="#22A050"/>
+    <SolidColorBrush x:Key="Warning" Color="#F59E0B"/>
+    <SolidColorBrush x:Key="Ink" Color="#E8EAED"/>
+    <SolidColorBrush x:Key="Muted" Color="#9AA0AA"/>
+    <SolidColorBrush x:Key="Line" Color="#3A3D44"/>
+    <SolidColorBrush x:Key="Surface" Color="#2B2D32"/>
+    <SolidColorBrush x:Key="SurfaceHover" Color="#34373D"/>
+    <SolidColorBrush x:Key="Window" Color="#1E1F22"/>
+    <SolidColorBrush x:Key="LogoPlate" Color="#E6E8EC"/>
+    <SolidColorBrush x:Key="Field" Color="#26282C"/>
+    <SolidColorBrush x:Key="FieldBorder" Color="#4A4E57"/>
+    <SolidColorBrush x:Key="Link" Color="#7AB2FF"/>
+    <SolidColorBrush x:Key="Selection" Color="#1E4FA8"/>
+    <SolidColorBrush x:Key="SelectionInk" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="SelectionInactive" Color="#3A3D44"/>
+    <SolidColorBrush x:Key="ScrollThumb" Color="#4A4E57"/>
+    <SolidColorBrush x:Key="ScrollThumbHover" Color="#656A75"/>
+    <SolidColorBrush x:Key="AllowInk" Color="#4ADE80"/>
+    <SolidColorBrush x:Key="BlockInk" Color="#F87171"/>
+    <SolidColorBrush x:Key="MissingRow" Color="#3A2023"/>
+    <SolidColorBrush x:Key="NoteBackground" Color="#332A12"/>
+    <SolidColorBrush x:Key="NoteBorder" Color="#7A5D14"/>
+    <SolidColorBrush x:Key="NoteLine" Color="#594513"/>
+    <SolidColorBrush x:Key="InfoBackground" Color="#172238"/>
+    <SolidColorBrush x:Key="InfoBorder" Color="#294A80"/>
+</ResourceDictionary>

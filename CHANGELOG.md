@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+
+- **Light and dark theme**: Settings › Appearance picks **Light**, **Dark** or **Same as Windows**, which
+  follows the Windows app mode and switches when you change it there. Title bars follow the theme too.
+- **Search the Activity list**: by app, host, IP address, protocol or result; `:80` finds port 80. Several words
+  narrow it down (`chrome :80`).
+- The Activity list shows the date as well as the time.
+- **Default duration in the prompt**: Settings › Prompts picks what *Duration* starts on: Forever, until the app
+  quits, for 1 hour, for the rest of today, or **Remember last selection**.
+
 ## 1.3.0
 
 - **Edit rules**: an **Edit…** button on the Rules tab (or double-click a rule) changes a rule's action and what

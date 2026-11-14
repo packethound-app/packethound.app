@@ -208,6 +208,13 @@ public sealed class Controller
         Log.Info(days == 0 ? "Activity kept for this session only" : $"Activity kept for {days} day(s)");
     }
 
+    public void SetDefaultPromptDuration(PromptDuration duration)
+    {
+        if (duration == Settings.DefaultPromptDuration) return;
+        Settings.DefaultPromptDuration = duration;
+        SaveSettings();
+    }
+
     // ---------------------------------------------------------------- protection on/off
 
     public void EnableProtection()
@@ -952,11 +959,19 @@ public sealed class Controller
         if (_queue.Count == 0) return;
 
         var request = _queue[0];
-        var prompt = new PromptWindow(request);
+        var duration = Settings.DefaultPromptDuration == PromptDuration.LastUsed ? Settings.LastPromptDuration : Settings.DefaultPromptDuration;
+        var prompt = new PromptWindow(request, duration);
         prompt.SetQueueCount(_queue.Count - 1);
         prompt.Closed += (_, _) =>
         {
             _prompt = null;
+            // A temp-folder copy is always "until it quits" (there's no choice), so it isn't the user's pick.
+            if (prompt.Decision is PromptDecision.Allow or PromptDecision.Block && !request.InTempFolder
+                && prompt.Duration != Settings.LastPromptDuration)
+            {
+                Settings.LastPromptDuration = prompt.Duration;
+                SaveSettings();
+            }
             Decide(request, prompt.Decision, prompt.Scope, prompt.UntilQuit, prompt.Expires);
             ShowNextPrompt();
         };

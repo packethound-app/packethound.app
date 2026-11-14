@@ -52,6 +52,7 @@ public partial class App : Application
         Log.Info("PacketHound starting");
 
         _controller = new Controller(Dispatcher);
+        ThemeManager.Initialize(_controller.Settings.Theme);
         _tray = new TrayIcon(_controller, ShowMain, ShowDeferred, ExitApp);
         _controller.Start();
 

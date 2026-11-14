@@ -4,7 +4,7 @@
         Title="PacketHound · Outgoing connection" Icon="/Assets/PacketHound.ico"
         Width="500" SizeToContent="Height" ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen" Topmost="True" ShowActivated="False" ShowInTaskbar="True"
-        Background="{StaticResource Window}" FontFamily="Segoe UI" FontSize="13"
+        Background="{DynamicResource Window}" Foreground="{DynamicResource Ink}" FontFamily="Segoe UI" FontSize="13"
         TextOptions.TextFormattingMode="Display">
     <Grid Margin="24,22,24,20" Grid.IsSharedSizeScope="True">
         <Grid.RowDefinitions>
@@ -19,26 +19,26 @@
 
         <!-- Who -->
         <DockPanel>
-            <Border DockPanel.Dock="Left" Width="52" Height="52" CornerRadius="10" Background="{StaticResource Surface}" VerticalAlignment="Top">
+            <Border DockPanel.Dock="Left" Width="52" Height="52" CornerRadius="10" Background="{DynamicResource Surface}" VerticalAlignment="Top">
                 <Image Source="{Binding Icon}" Width="32" Height="32" RenderOptions.BitmapScalingMode="HighQuality"/>
             </Border>
             <StackPanel Margin="14,2,0,0" VerticalAlignment="Center">
-                <TextBlock Text="{Binding DisplayName}" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}" TextWrapping="Wrap"/>
-                <TextBlock Text="is trying to connect to" Foreground="{StaticResource Muted}" Margin="0,2,0,0"/>
+                <TextBlock Text="{Binding DisplayName}" FontSize="19" FontWeight="SemiBold" Foreground="{DynamicResource Ink}" TextWrapping="Wrap"/>
+                <TextBlock Text="is trying to connect to" Foreground="{DynamicResource Muted}" Margin="0,2,0,0"/>
             </StackPanel>
         </DockPanel>
 
         <!-- Where -->
-        <Border Grid.Row="1" Margin="0,18,0,0" Padding="14,12" Background="{StaticResource Surface}" CornerRadius="8"
+        <Border Grid.Row="1" Margin="0,18,0,0" Padding="14,12" Background="{DynamicResource Surface}" CornerRadius="8"
                 MouseRightButtonUp="CopyArea_RightClick">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Right" Margin="12,2,0,0" FontSize="12" VerticalAlignment="Top">
-                    <Hyperlink x:Name="CopyLink" Click="CopyLink_Click" Foreground="{StaticResource Muted}"
+                    <Hyperlink x:Name="CopyLink" Click="CopyLink_Click" Foreground="{DynamicResource Muted}"
                                ToolTip="Copy the IP address, host name or program path"><Run x:Name="CopyRun" Text="Copy"/></Hyperlink>
                 </TextBlock>
                 <StackPanel>
-                    <TextBlock Text="{Binding DestinationTitle}" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource Ink}" TextWrapping="Wrap"/>
-                    <TextBlock Text="{Binding DestinationDetail}" Foreground="{StaticResource Muted}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                    <TextBlock Text="{Binding DestinationTitle}" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource Ink}" TextWrapping="Wrap"/>
+                    <TextBlock Text="{Binding DestinationDetail}" Foreground="{DynamicResource Muted}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -68,24 +68,24 @@
             <TextBlock x:Name="CommandLabel" Style="{StaticResource Label}" Grid.Row="4" Text="Command" Visibility="Collapsed"/>
             <TextBox x:Name="CommandBox" Grid.Row="4" Grid.Column="1" Margin="0,3" Padding="0" Visibility="Collapsed"
                      Text="{Binding CommandLineText, Mode=OneWay}" IsReadOnly="True" BorderThickness="0" Background="Transparent"
-                     Foreground="{StaticResource Ink}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                     Foreground="{DynamicResource Ink}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
                      MaxHeight="96" VerticalScrollBarVisibility="Auto"/>
         </Grid>
 
         <StackPanel Grid.Row="3">
             <!-- Temporary-folder hint -->
             <Border x:Name="TempNote" Margin="0,12,0,0" Padding="12,8" CornerRadius="6"
-                    Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" Visibility="Collapsed">
-                <TextBlock x:Name="TempText" Foreground="{StaticResource Ink}" TextWrapping="Wrap"/>
+                    Background="{DynamicResource NoteBackground}" BorderBrush="{DynamicResource NoteBorder}" BorderThickness="1" Visibility="Collapsed">
+                <TextBlock x:Name="TempText" Foreground="{DynamicResource Ink}" TextWrapping="Wrap"/>
             </Border>
 
             <!-- An earlier version of this app (in another versioned folder) has rules -->
             <Border x:Name="PreviousNote" Margin="0,12,0,0" Padding="12,10" CornerRadius="6"
-                    Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" Visibility="Collapsed">
+                    Background="{DynamicResource InfoBackground}" BorderBrush="{DynamicResource InfoBorder}" BorderThickness="1" Visibility="Collapsed">
                 <DockPanel>
                     <Button x:Name="SameAsBeforeButton" DockPanel.Dock="Right" Content="Same as before" Style="{StaticResource PrimaryButton}"
                             Margin="12,0,0,0" VerticalAlignment="Center" Click="SameAsBefore_Click"/>
-                    <TextBlock x:Name="PreviousText" Foreground="{StaticResource Ink}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="PreviousText" Foreground="{DynamicResource Ink}" TextWrapping="Wrap" VerticalAlignment="Center"/>
                 </DockPanel>
             </Border>
         </StackPanel>
@@ -105,24 +105,24 @@
                       DropDownClosed="Scope_DropDownClosed" MaxDropDownHeight="320"/>
             <TextBlock x:Name="DurationLabel" Style="{StaticResource Label}" Grid.Row="1" Text="Duration" VerticalAlignment="Center"/>
             <ComboBox x:Name="DurationBox" Grid.Row="1" Grid.Column="1" Margin="0,3" Padding="8,5" SelectionChanged="Options_Changed">
-                <ComboBoxItem Content="Forever" IsSelected="True"/>
-                <ComboBoxItem x:Name="UntilQuitItem" Content="Until the app quits"/>
-                <ComboBoxItem x:Name="HourItem" Content="For 1 hour"/>
-                <ComboBoxItem x:Name="TodayItem" Content="For the rest of today"/>
+                <ComboBoxItem Content="Forever" Tag="Forever" IsSelected="True"/>
+                <ComboBoxItem x:Name="UntilQuitItem" Content="Until the app quits" Tag="UntilQuit"/>
+                <ComboBoxItem x:Name="HourItem" Content="For 1 hour" Tag="OneHour"/>
+                <ComboBoxItem x:Name="TodayItem" Content="For the rest of today" Tag="RestOfToday"/>
             </ComboBox>
         </Grid>
 
-        <TextBlock x:Name="NoteText" Grid.Row="5" Margin="2,12,0,0" Foreground="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap"/>
+        <TextBlock x:Name="NoteText" Grid.Row="5" Margin="2,12,0,0" Foreground="{DynamicResource Muted}" FontSize="12" TextWrapping="Wrap"/>
 
         <!-- Actions -->
         <DockPanel Grid.Row="6" Margin="0,20,0,0" LastChildFill="False">
             <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
                 <TextBlock>
-                    <Hyperlink Click="Later_Click" Foreground="{StaticResource Muted}"
+                    <Hyperlink Click="Later_Click" Foreground="{DynamicResource Muted}"
                                ToolTip="Keeps it blocked. You can decide any time from the Rules tab in PacketHound; it asks again in a few minutes if the app is still running.">Decide later</Hyperlink>
                 </TextBlock>
-                <TextBlock Text="Stays blocked · listed on the Rules tab" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0"/>
-                <TextBlock x:Name="QueueText" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,4,0,0" Visibility="Collapsed"/>
+                <TextBlock Text="Stays blocked · listed on the Rules tab" Foreground="{DynamicResource Muted}" FontSize="12" Margin="0,2,0,0"/>
+                <TextBlock x:Name="QueueText" Foreground="{DynamicResource Muted}" FontSize="12" Margin="0,4,0,0" Visibility="Collapsed"/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <Button Content="Block" Style="{StaticResource DangerButton}" MinWidth="96" Click="Block_Click"/>

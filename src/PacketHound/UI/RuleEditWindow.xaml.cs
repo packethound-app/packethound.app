@@ -28,6 +28,7 @@ public partial class RuleEditWindow : Window
     public RuleEditWindow(Controller controller, FirewallRuleInfo rule, IEnumerable<FirewallRuleInfo> appRules)
     {
         InitializeComponent();
+        ThemeManager.Attach(this);
         _controller = controller;
         _rule = rule;
         _otherRules = appRules.Where(r => r.Name != rule.Name).ToList();

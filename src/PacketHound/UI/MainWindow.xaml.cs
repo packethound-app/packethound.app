@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
@@ -21,10 +22,13 @@ public partial class MainWindow : Window
     readonly GridSorting _activitySort;
     readonly DispatcherTimer _copiedTimer = new() { Interval = TimeSpan.FromSeconds(3) };
     ICollectionView? _rulesView;
+    readonly ListCollectionView _activityView;
+    string[] _activityTerms = Array.Empty<string>();
 
     public MainWindow(Controller controller)
     {
         InitializeComponent();
+        ThemeManager.Attach(this);
         Title = $"PacketHound v{UpdateService.CurrentVersion}";
         _controller = controller;
         RestorePlacement();
@@ -37,7 +41,14 @@ public partial class MainWindow : Window
 
         _rulesSort = new GridSorting(RulesGrid, controller.Settings, "Rules", new SortSetting("CreatedDate", Descending: true));
         _activitySort = new GridSorting(ActivityGrid, controller.Settings, "Activity", new SortSetting("Time", Descending: true));
-        ActivityGrid.ItemsSource = controller.Activity;
+        // This window's own view of the list (the window is recreated each time it's opened, and the
+        // collection's shared default view would keep this window's filter after it closes).
+        _activityView = new ListCollectionView(controller.Activity) { Filter = FilterActivity };
+        // Host names arrive after the entry is added, so a search for one re-checks the row when it does.
+        _activityView.LiveFilteringProperties.Add(nameof(ActivityEntry.Destination));
+        _activityView.IsLiveFiltering = true;
+        ((INotifyCollectionChanged)_activityView).CollectionChanged += (_, _) => UpdateActivityCount();
+        ActivityGrid.ItemsSource = _activityView;
         _activitySort.Apply();
         DeferredList.ItemsSource = controller.Deferred;
 
@@ -61,6 +72,10 @@ public partial class MainWindow : Window
         StoreAppsAsWindows.IsChecked = _controller.Settings.TreatMicrosoftStoreAppsAsWindows;
         AskForTools.IsChecked = _controller.Settings.AskForScriptingTools;
         CheckForUpdates.IsChecked = _controller.Settings.CheckForUpdates;
+        ThemeBox.SelectedItem = ThemeBox.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => (string)i.Tag == _controller.Settings.Theme.ToString()) ?? ThemeBox.Items[0];
+        PromptDurationBox.SelectedItem = PromptDurationBox.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => (string)i.Tag == _controller.Settings.DefaultPromptDuration.ToString()) ?? PromptDurationBox.Items[0];
         // A value set by hand in settings.json that isn't in the list shows as the nearest longer choice.
         var keepDays = _controller.Settings.ActivityKeepDays;
         ActivityKeepBox.SelectedItem = ActivityKeepBox.Items.Cast<ComboBoxItem>()
@@ -120,7 +135,7 @@ public partial class MainWindow : Window
     {
         var on = _controller.ProtectionEnabled;
         var until = _controller.PausedUntil;
-        StatusDot.Fill = (System.Windows.Media.Brush)FindResource(on ? "Success" : "Warning");
+        StatusDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, on ? "Success" : "Warning");
         StatusTitle.Text = on ? "Protection is on" : until is { } t ? $"Protection is paused until {t:t}" : "Protection is paused";
         StatusDetail.Text = on
             ? "Apps you haven't decided about yet are blocked, and PacketHound asks you about them. Windows itself is allowed automatically."
@@ -436,6 +451,46 @@ public partial class MainWindow : Window
 
     void ClearActivity_Click(object sender, RoutedEventArgs e) => _controller.ClearActivity();
 
+    void ActivitySearch_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _activityTerms = ActivitySearchBox.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        _activityView.Refresh();
+        UpdateActivityCount();
+    }
+
+    /// <summary>Every word must match. ":80" means port 80 exactly (not 8080); other words match
+    /// the app, its path, the destination (host and IP), protocol or result.</summary>
+    bool FilterActivity(object o)
+    {
+        var entry = (ActivityEntry)o;
+        foreach (var term in _activityTerms)
+        {
+            if (term.Length > 1 && term[0] == ':' && int.TryParse(term.AsSpan(1), out var port))
+            {
+                if (entry.RemotePort != port) return false;
+            }
+            else if (!(entry.AppName.Contains(term, StringComparison.CurrentCultureIgnoreCase)
+                       || entry.AppPath.Contains(term, StringComparison.CurrentCultureIgnoreCase)
+                       || entry.Destination.Contains(term, StringComparison.CurrentCultureIgnoreCase)
+                       || entry.Protocol.Contains(term, StringComparison.CurrentCultureIgnoreCase)
+                       || entry.Result.Contains(term, StringComparison.CurrentCultureIgnoreCase)))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void UpdateActivityCount()
+    {
+        if (_activityTerms.Length == 0)
+        {
+            ActivityCountText.Text = "";
+            return;
+        }
+        ActivityCountText.Text = $"{_activityView.Count:N0} of {_controller.Activity.Count:N0}";
+    }
+
     void ActivityGrid_DoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (FindAncestor<DataGridRow>(e.OriginalSource)?.Item is ActivityEntry entry) CopyAddress(entry);
@@ -542,6 +597,21 @@ public partial class MainWindow : Window
     void ActivityKeep_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (ActivityKeepBox.SelectedItem is ComboBoxItem { Tag: string days }) _controller.SetActivityKeepDays(int.Parse(days));
+    }
+
+    void PromptDuration_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (PromptDurationBox.SelectedItem is ComboBoxItem { Tag: string tag } && Enum.TryParse<PromptDuration>(tag, out var duration))
+            _controller.SetDefaultPromptDuration(duration);
+    }
+
+    void Theme_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (ThemeBox.SelectedItem is not ComboBoxItem { Tag: string tag } || !Enum.TryParse<ThemeChoice>(tag, out var choice)) return;
+        if (choice == _controller.Settings.Theme) return;
+        _controller.Settings.Theme = choice;
+        _controller.Settings.Save();
+        ThemeManager.Set(choice);
     }
 
     void CheckForUpdates_Click(object sender, RoutedEventArgs e)

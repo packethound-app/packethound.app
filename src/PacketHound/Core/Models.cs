@@ -223,6 +223,8 @@ public sealed class PendingRequest : INotifyPropertyChanged
 public sealed class ActivityEntry : INotifyPropertyChanged
 {
     public DateTime Time { get; init; }
+    /// <summary>Date and time in the user's regional format, with seconds (Rules shows "g", minutes only).</summary>
+    public string TimeText => Time.ToString("G");
     public string AppName { get; init; } = "";
     public string AppPath { get; init; } = "";
     public string RemoteAddress { get; init; } = "";

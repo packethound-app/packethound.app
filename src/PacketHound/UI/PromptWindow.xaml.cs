@@ -16,12 +16,16 @@ public partial class PromptWindow : Window
 {
     readonly PendingRequest _request;
 
-    public PromptWindow(PendingRequest request)
+    /// <param name="duration">The duration selected when the prompt opens.</param>
+    public PromptWindow(PendingRequest request, PromptDuration duration)
     {
         InitializeComponent();
+        ThemeManager.Attach(this);
         _request = request;
         DataContext = request;
         UntilQuitItem.Content = $"Until {request.DisplayName} quits";
+        DurationBox.SelectedItem = DurationBox.Items.Cast<ComboBoxItem>()
+            .FirstOrDefault(i => (string)i.Tag == duration.ToString()) ?? DurationBox.Items[0];
         if (request.InTempFolder)
         {
             // A copy in a temp folder is gone after this run, so its rule always lasts until it quits.
@@ -61,6 +65,9 @@ public partial class PromptWindow : Window
 
     /// <summary>A timed rule: when it's removed. Null for other durations.</summary>
     public DateTime? Expires { get; private set; }
+
+    /// <summary>The duration selected when Allow or Block was clicked.</summary>
+    public PromptDuration Duration { get; private set; }
 
     void OnRequestChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -240,6 +247,8 @@ public partial class PromptWindow : Window
         Scope = ScopeBox.SelectedItem as ScopeOption;
         UntilQuit = DurationBox.SelectedItem == UntilQuitItem;
         Expires = ExpiresFor(DurationBox.SelectedItem);
+        Duration = DurationBox.SelectedItem is ComboBoxItem { Tag: string tag } && Enum.TryParse<PromptDuration>(tag, out var d)
+            ? d : PromptDuration.Forever;
         _finished = true;
         Close();
     }

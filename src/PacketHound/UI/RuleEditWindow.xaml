@@ -4,17 +4,17 @@
         Title="PacketHound · Edit rule" Icon="/Assets/PacketHound.ico"
         Width="520" SizeToContent="Height" ResizeMode="NoResize"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
-        Background="{StaticResource Window}" FontFamily="Segoe UI" FontSize="13"
+        Background="{DynamicResource Window}" Foreground="{DynamicResource Ink}" FontFamily="Segoe UI" FontSize="13"
         TextOptions.TextFormattingMode="Display">
     <StackPanel Margin="24,22,24,20">
         <!-- Which app -->
         <DockPanel>
-            <Border DockPanel.Dock="Left" Width="52" Height="52" CornerRadius="10" Background="{StaticResource Surface}" VerticalAlignment="Top">
+            <Border DockPanel.Dock="Left" Width="52" Height="52" CornerRadius="10" Background="{DynamicResource Surface}" VerticalAlignment="Top">
                 <Image x:Name="AppIcon" Width="32" Height="32" RenderOptions.BitmapScalingMode="HighQuality"/>
             </Border>
             <StackPanel Margin="14,2,0,0" VerticalAlignment="Center">
-                <TextBlock x:Name="AppNameText" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Ink}" TextWrapping="Wrap"/>
-                <TextBlock x:Name="AppPathText" Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                <TextBlock x:Name="AppNameText" FontSize="19" FontWeight="SemiBold" Foreground="{DynamicResource Ink}" TextWrapping="Wrap"/>
+                <TextBlock x:Name="AppPathText" Foreground="{DynamicResource Muted}" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"/>
             </StackPanel>
         </DockPanel>
 
@@ -46,26 +46,26 @@
             <TextBlock x:Name="TargetLabel" Style="{StaticResource Label}" Grid.Row="2" VerticalAlignment="Center" Visibility="Collapsed"/>
             <TextBox x:Name="TargetBox" Grid.Row="2" Grid.Column="1" Margin="0,3" Padding="6,5" VerticalContentAlignment="Center"
                      Visibility="Collapsed" TextChanged="Target_TextChanged"/>
-            <TextBlock x:Name="TargetError" Grid.Row="3" Grid.Column="1" Margin="0,2,0,0" Foreground="{StaticResource Danger}"
+            <TextBlock x:Name="TargetError" Grid.Row="3" Grid.Column="1" Margin="0,2,0,0" Foreground="{DynamicResource Danger}"
                        FontSize="12" TextWrapping="Wrap" Visibility="Collapsed"/>
             <CheckBox x:Name="KeepBox" Grid.Row="4" Grid.Column="1" Margin="0,8,0,0" Visibility="Collapsed" Click="Option_Changed"/>
         </Grid>
 
         <!-- Addresses a host or domain rule has collected -->
         <StackPanel x:Name="AddressesPanel" Margin="2,14,0,0" Visibility="Collapsed">
-            <TextBlock x:Name="AddressesTitle" Foreground="{StaticResource Muted}" Margin="0,0,0,4" TextWrapping="Wrap"/>
-            <ListBox x:Name="AddressesList" MaxHeight="110" BorderBrush="{StaticResource Line}" Foreground="{StaticResource Ink}"
+            <TextBlock x:Name="AddressesTitle" Foreground="{DynamicResource Muted}" Margin="0,0,0,4" TextWrapping="Wrap"/>
+            <ListBox x:Name="AddressesList" MaxHeight="110" BorderBrush="{DynamicResource Line}" Foreground="{DynamicResource Ink}"
                      FontSize="12" Padding="2"/>
         </StackPanel>
 
-        <TextBlock x:Name="NoteText" Margin="2,14,0,0" Foreground="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap"/>
+        <TextBlock x:Name="NoteText" Margin="2,14,0,0" Foreground="{DynamicResource Muted}" FontSize="12" TextWrapping="Wrap"/>
 
         <Border x:Name="WarningBox" Margin="0,12,0,0" Padding="12,8" CornerRadius="6"
-                Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" Visibility="Collapsed">
-            <TextBlock x:Name="WarningText" Foreground="{StaticResource Ink}" TextWrapping="Wrap"/>
+                Background="{DynamicResource NoteBackground}" BorderBrush="{DynamicResource NoteBorder}" BorderThickness="1" Visibility="Collapsed">
+            <TextBlock x:Name="WarningText" Foreground="{DynamicResource Ink}" TextWrapping="Wrap"/>
         </Border>
 
-        <TextBlock x:Name="SaveError" Margin="2,12,0,0" Foreground="{StaticResource Danger}" TextWrapping="Wrap" Visibility="Collapsed"/>
+        <TextBlock x:Name="SaveError" Margin="2,12,0,0" Foreground="{DynamicResource Danger}" TextWrapping="Wrap" Visibility="Collapsed"/>
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
             <Button x:Name="CancelButton" Content="Cancel" MinWidth="96" IsCancel="True"/>

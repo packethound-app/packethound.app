@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="PacketHound" Icon="/Assets/PacketHound.ico" Width="1000" Height="640" MinWidth="720" MinHeight="420"
         WindowStartupLocation="CenterScreen"
-        Background="{StaticResource Window}" FontFamily="Segoe UI" FontSize="13"
+        Background="{DynamicResource Window}" Foreground="{DynamicResource Ink}" FontFamily="Segoe UI" FontSize="13"
         TextOptions.TextFormattingMode="Display">
     <Window.Resources>
         <Style TargetType="DataGrid">
@@ -11,9 +11,11 @@
             <Setter Property="IsReadOnly" Value="True"/>
             <Setter Property="HeadersVisibility" Value="Column"/>
             <Setter Property="GridLinesVisibility" Value="Horizontal"/>
-            <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource Line}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
-            <Setter Property="Background" Value="White"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource Line}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+            <Setter Property="Background" Value="{DynamicResource Window}"/>
+            <Setter Property="RowBackground" Value="{DynamicResource Window}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
             <!-- Rows grow when selected so cut-off text can wrap (see CellText). -->
             <Setter Property="MinRowHeight" Value="30"/>
             <Setter Property="CanUserResizeRows" Value="False"/>
@@ -32,10 +34,10 @@
             </Setter>
         </Style>
         <Style TargetType="DataGridColumnHeader">
-            <Setter Property="Background" Value="{StaticResource Surface}"/>
-            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="Background" Value="{DynamicResource Surface}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Muted}"/>
             <Setter Property="Padding" Value="8,6"/>
-            <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
             <Setter Property="BorderThickness" Value="0,0,1,1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -47,7 +49,7 @@
                                 <StackPanel Orientation="Horizontal">
                                     <ContentPresenter VerticalAlignment="Center"/>
                                     <Path x:Name="SortArrow" Width="8" Height="5" Margin="6,1,0,0" Stretch="Fill"
-                                          VerticalAlignment="Center" Fill="{StaticResource Ink}" Visibility="Collapsed"/>
+                                          VerticalAlignment="Center" Fill="{DynamicResource Ink}" Visibility="Collapsed"/>
                                 </StackPanel>
                             </Border>
                             <Thumb x:Name="PART_LeftHeaderGripper" HorizontalAlignment="Left" Margin="-4,0,0,0" Style="{StaticResource HeaderGripper}"/>
@@ -57,15 +59,15 @@
                             <Trigger Property="SortDirection" Value="Ascending">
                                 <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="SortArrow" Property="Data" Value="M0,5 L4,0 L8,5 Z"/>
-                                <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
                             </Trigger>
                             <Trigger Property="SortDirection" Value="Descending">
                                 <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="SortArrow" Property="Data" Value="M0,0 L8,0 L4,5 Z"/>
-                                <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#E9EBEF"/>
+                                <Setter Property="Background" Value="{DynamicResource SurfaceHover}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -97,28 +99,42 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
-        </Style>
-        <Style TargetType="TabItem">
-            <Setter Property="Padding" Value="16,6"/>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource SelectionInactive}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+                </Trigger>
+                <MultiTrigger>
+                    <MultiTrigger.Conditions>
+                        <Condition Property="IsSelected" Value="True"/>
+                        <Condition Property="Selector.IsSelectionActive" Value="True"/>
+                    </MultiTrigger.Conditions>
+                    <Setter Property="Background" Value="{DynamicResource Selection}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource SelectionInk}"/>
+                </MultiTrigger>
+            </Style.Triggers>
         </Style>
     </Window.Resources>
 
     <DockPanel>
         <!-- Status banner -->
-        <Border DockPanel.Dock="Top" Padding="20,12" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1">
+        <Border DockPanel.Dock="Top" Padding="20,12" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
             <DockPanel>
                 <Button x:Name="ToggleButton" DockPanel.Dock="Right" VerticalAlignment="Center" MinWidth="170" Click="Toggle_Click"/>
                 <Button x:Name="QuietButton" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,10,0" Click="Quiet_Click"
                         ToolTip="Stop asking about new apps for a while. They stay blocked, and are listed so you can decide later."/>
-                <Image DockPanel.Dock="Left" Source="/Assets/logo.png" Height="72" Margin="0,0,20,0" VerticalAlignment="Center"
-                       RenderOptions.BitmapScalingMode="HighQuality"/>
-                <Rectangle DockPanel.Dock="Left" Width="1" Fill="{StaticResource Line}" Margin="0,4,20,4"/>
+                <!-- The logo's lettering is dark, so the dark theme puts it on a light plate (transparent in the light theme). -->
+                <Border DockPanel.Dock="Left" Background="{DynamicResource LogoPlate}" CornerRadius="8" Padding="6,4"
+                        Margin="-6,-4,14,-4" VerticalAlignment="Center">
+                    <Image Source="/Assets/logo.png" Height="72" RenderOptions.BitmapScalingMode="HighQuality"/>
+                </Border>
+                <Rectangle DockPanel.Dock="Left" Width="1" Fill="{DynamicResource Line}" Margin="0,4,20,4"/>
                 <Ellipse x:Name="StatusDot" DockPanel.Dock="Left" Width="12" Height="12" Margin="0,0,12,0" VerticalAlignment="Center"/>
                 <StackPanel VerticalAlignment="Center">
-                    <TextBlock x:Name="StatusTitle" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
-                    <TextBlock x:Name="StatusDetail" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,2,16,0"/>
-                    <TextBlock x:Name="QuietText" Foreground="{StaticResource Warning}" TextWrapping="Wrap" Margin="0,4,16,0" Visibility="Collapsed"/>
-                    <TextBlock x:Name="ErrorText" Foreground="{StaticResource Danger}" TextWrapping="Wrap" Margin="0,4,16,0" Visibility="Collapsed"/>
+                    <TextBlock x:Name="StatusTitle" FontSize="17" FontWeight="SemiBold" Foreground="{DynamicResource Ink}"/>
+                    <TextBlock x:Name="StatusDetail" Foreground="{DynamicResource Muted}" TextWrapping="Wrap" Margin="0,2,16,0"/>
+                    <TextBlock x:Name="QuietText" Foreground="{DynamicResource Warning}" TextWrapping="Wrap" Margin="0,4,16,0" Visibility="Collapsed"/>
+                    <TextBlock x:Name="ErrorText" Foreground="{DynamicResource Danger}" TextWrapping="Wrap" Margin="0,4,16,0" Visibility="Collapsed"/>
                     <WrapPanel>
                         <TextBlock x:Name="PendingText" Margin="0,4,16,0" Visibility="Collapsed">
                             <Hyperlink Click="ShowPrompt_Click"><Run x:Name="PendingRun"/></Hyperlink>
@@ -135,12 +151,12 @@
             </DockPanel>
         </Border>
 
-        <TabControl x:Name="Tabs" Margin="12" BorderBrush="{StaticResource Line}">
+        <TabControl x:Name="Tabs" Margin="12" BorderBrush="{DynamicResource Line}">
             <!-- Rules -->
             <TabItem x:Name="RulesTab" Header="Rules">
                 <DockPanel Margin="10">
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10" LastChildFill="False">
-                        <TextBlock DockPanel.Dock="Left" Text="Search" VerticalAlignment="Center" Foreground="{StaticResource Muted}" Margin="0,0,8,0"/>
+                        <TextBlock DockPanel.Dock="Left" Text="Search" VerticalAlignment="Center" Foreground="{DynamicResource Muted}" Margin="0,0,8,0"/>
                         <TextBox x:Name="SearchBox" DockPanel.Dock="Left" Width="240" Padding="4,3" VerticalContentAlignment="Center" TextChanged="Search_TextChanged"/>
                         <CheckBox x:Name="ShowWindowsRules" DockPanel.Dock="Left" Margin="16,0,0,0" VerticalAlignment="Center"
                                   Content="Show automatic Windows rules" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
@@ -156,18 +172,18 @@
 
                     <!-- Apps the user chose to decide later about -->
                     <Border x:Name="DeferredPanel" DockPanel.Dock="Top" Margin="0,0,0,10" Padding="14,10" CornerRadius="6"
-                            Background="#FFFBEB" BorderBrush="#FCD34D" BorderThickness="1" Visibility="Collapsed">
+                            Background="{DynamicResource NoteBackground}" BorderBrush="{DynamicResource NoteBorder}" BorderThickness="1" Visibility="Collapsed">
                         <DockPanel>
                             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                                <TextBlock Text="Waiting for your decision" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                <TextBlock Text="Waiting for your decision" FontWeight="SemiBold" Foreground="{DynamicResource Ink}"/>
                                 <TextBlock Text="You chose to decide later about these apps. They're blocked until you decide."
-                                           Foreground="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                           Foreground="{DynamicResource Muted}" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"/>
                             </StackPanel>
                             <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto">
                                 <ItemsControl x:Name="DeferredList">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Border BorderBrush="#FDE68A" BorderThickness="0,1,0,0" Padding="0,6">
+                                            <Border BorderBrush="{DynamicResource NoteLine}" BorderThickness="0,1,0,0" Padding="0,6">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="Auto"/>
@@ -179,16 +195,16 @@
                                                     <Image Source="{Binding Icon}" Width="20" Height="20" Margin="0,0,10,0" VerticalAlignment="Center"
                                                            RenderOptions.BitmapScalingMode="HighQuality"/>
                                                     <StackPanel Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center" ToolTip="{Binding AppPath}">
-                                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Text="{Binding Publisher}" Foreground="{StaticResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" Foreground="{DynamicResource Ink}" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Publisher}" Foreground="{DynamicResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="2" Margin="0,0,12,0" VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding DestinationTitle}" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Text="{Binding DestinationDetail}" Foreground="{StaticResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding DestinationTitle}" Foreground="{DynamicResource Ink}" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding DestinationDetail}" Foreground="{DynamicResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="3" Margin="0,0,12,0" VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding DeferredText}" Foreground="{StaticResource Ink}" TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Text="{Binding AttemptsText}" Foreground="{StaticResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding DeferredText}" Foreground="{DynamicResource Ink}" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding AttemptsText}" Foreground="{DynamicResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
                                                     </StackPanel>
                                                     <Button Grid.Column="4" Content="Decide…" Style="{StaticResource PrimaryButton}" VerticalAlignment="Center"
                                                             Click="DecideNow_Click"/>
@@ -200,7 +216,7 @@
                             </ScrollViewer>
                         </DockPanel>
                     </Border>
-                    <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" Foreground="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap"
+                    <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" Foreground="{DynamicResource Muted}" FontSize="12" TextWrapping="Wrap"
                                Text="These are ordinary Windows Firewall outbound rules (wf.msc › Outbound Rules, group “PacketHound”). Deleting a rule means PacketHound will ask about that app again."/>
                     <DataGrid x:Name="RulesGrid" SelectionChanged="RulesGrid_SelectionChanged" MouseDoubleClick="RulesGrid_DoubleClick">
                         <DataGrid.RowStyle>
@@ -208,7 +224,7 @@
                                 <Style.Triggers>
                                     <!-- Rules whose program is gone: a light red tint (selection still shows over it). -->
                                     <DataTrigger Binding="{Binding IsMissing}" Value="True">
-                                        <Setter Property="Background" Value="#FEF2F2"/>
+                                        <Setter Property="Background" Value="{DynamicResource MissingRow}"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -224,10 +240,10 @@
                                             <TextBlock Text="{Binding Action}" FontWeight="SemiBold" Margin="8,0,0,0" VerticalAlignment="Center">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
-                                                        <Setter Property="Foreground" Value="#B91C1C"/>
+                                                        <Setter Property="Foreground" Value="{DynamicResource BlockInk}"/>
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding IsAllow}" Value="True">
-                                                                <Setter Property="Foreground" Value="#15803D"/>
+                                                                <Setter Property="Foreground" Value="{DynamicResource AllowInk}"/>
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
@@ -257,12 +273,18 @@
             <!-- Activity -->
             <TabItem Header="Activity">
                 <DockPanel Margin="10">
+                    <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8" TextWrapping="Wrap" Foreground="{DynamicResource Muted}"
+                               Text="Outgoing connections the firewall blocked, and what happened next (kept for as long as set in Settings). Double-click a row to copy its IP address; right-click for more."/>
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10" LastChildFill="False">
-                        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="{StaticResource Muted}"
-                                   Text="Outgoing connections the firewall blocked, and what happened next (kept for as long as set in Settings). Double-click a row to copy its IP address; right-click for more."/>
+                        <TextBlock DockPanel.Dock="Left" Text="Search" VerticalAlignment="Center" Foreground="{DynamicResource Muted}" Margin="0,0,8,0"/>
+                        <TextBox x:Name="ActivitySearchBox" DockPanel.Dock="Left" Width="240" Padding="4,3" VerticalContentAlignment="Center"
+                                 TextChanged="ActivitySearch_TextChanged"
+                                 ToolTip="App, host, IP address, protocol or result. :80 finds port 80. Separate words to narrow it down, e.g. chrome :80"/>
+                        <TextBlock x:Name="ActivityCountText" DockPanel.Dock="Left" VerticalAlignment="Center" Margin="12,0,0,0"
+                                   Foreground="{DynamicResource Muted}"/>
                         <Button DockPanel.Dock="Right" Content="Clear" Click="ClearActivity_Click"/>
                         <TextBlock x:Name="CopiedText" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0"
-                                   Foreground="{StaticResource Success}" Visibility="Collapsed"/>
+                                   Foreground="{DynamicResource Success}" Visibility="Collapsed"/>
                     </DockPanel>
                     <DataGrid x:Name="ActivityGrid" MouseDoubleClick="ActivityGrid_DoubleClick" ContextMenuOpening="ActivityGrid_ContextMenuOpening">
                         <DataGrid.ContextMenu>
@@ -273,7 +295,7 @@
                             </ContextMenu>
                         </DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Time" Binding="{Binding Time, StringFormat=HH:mm:ss}" Width="80"/>
+                            <DataGridTextColumn Header="Time" Binding="{Binding TimeText}" SortMemberPath="Time" Width="140"/>
                             <DataGridTextColumn Header="Application" Binding="{Binding AppName}" Width="200"/>
                             <DataGridTextColumn Header="Destination" Binding="{Binding Destination}" Width="*" MinWidth="200"/>
                             <DataGridTextColumn Header="Protocol" Binding="{Binding Protocol}" Width="80"/>
@@ -281,7 +303,7 @@
                         </DataGrid.Columns>
                         <DataGrid.RowDetailsTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding AppPath}" Foreground="{StaticResource Muted}" Margin="88,0,0,6"/>
+                                <TextBlock Text="{Binding AppPath}" Foreground="{DynamicResource Muted}" Margin="88,0,0,6"/>
                             </DataTemplate>
                         </DataGrid.RowDetailsTemplate>
                     </DataGrid>
@@ -297,6 +319,32 @@
                         <TextBlock Style="{StaticResource Label}" Margin="22,0,0,8" TextWrapping="Wrap"
                                    Text="Runs elevated through Task Scheduler, without a UAC prompt. While PacketHound isn't running, apps without a rule are blocked silently."/>
 
+                        <TextBlock Text="Appearance" FontSize="15" FontWeight="SemiBold" Margin="0,16,0,8"/>
+                        <WrapPanel>
+                            <TextBlock Text="Theme" VerticalAlignment="Center" Margin="0,0,10,8"/>
+                            <ComboBox x:Name="ThemeBox" MinWidth="160" Padding="8,4" Margin="0,0,0,8" SelectionChanged="Theme_Changed">
+                                <ComboBoxItem Content="Same as Windows" Tag="System"/>
+                                <ComboBoxItem Content="Light" Tag="Light"/>
+                                <ComboBoxItem Content="Dark" Tag="Dark"/>
+                            </ComboBox>
+                        </WrapPanel>
+                        <TextBlock Style="{StaticResource Label}" Margin="0,0,0,8" TextWrapping="Wrap"
+                                   Text="“Same as Windows” follows the app mode in Windows Settings › Personalization › Colors, and switches when you change it there."/>
+
+                        <TextBlock Text="Prompts" FontSize="15" FontWeight="SemiBold" Margin="0,16,0,8"/>
+                        <WrapPanel>
+                            <TextBlock Text="Duration starts on" Foreground="{DynamicResource Ink}" VerticalAlignment="Center" Margin="0,0,10,8"/>
+                            <ComboBox x:Name="PromptDurationBox" MinWidth="160" Padding="8,4" Margin="0,0,0,8" SelectionChanged="PromptDuration_Changed">
+                                <ComboBoxItem Content="Forever" Tag="Forever"/>
+                                <ComboBoxItem Content="Until the app quits" Tag="UntilQuit"/>
+                                <ComboBoxItem Content="For 1 hour" Tag="OneHour"/>
+                                <ComboBoxItem Content="For the rest of today" Tag="RestOfToday"/>
+                                <ComboBoxItem Content="Remember last selection" Tag="LastUsed"/>
+                            </ComboBox>
+                        </WrapPanel>
+                        <TextBlock Style="{StaticResource Label}" Margin="0,0,0,8" TextWrapping="Wrap"
+                                   Text="What the Duration list in the allow/block prompt is set to when it opens. You can still change it in each prompt. “Remember last selection” starts on whatever you chose with your last Allow or Block, even after a restart."/>
+
                         <TextBlock Text="Updates" FontSize="15" FontWeight="SemiBold" Margin="0,16,0,8"/>
                         <CheckBox x:Name="CheckForUpdates" Content="Check for updates automatically (once a week)" Margin="0,4" Click="CheckForUpdates_Click"/>
                         <TextBlock Style="{StaticResource Label}" Margin="22,0,0,8" TextWrapping="Wrap"
@@ -310,7 +358,7 @@
 
                         <TextBlock Text="Activity" FontSize="15" FontWeight="SemiBold" Margin="0,16,0,8"/>
                         <WrapPanel>
-                            <TextBlock Text="Keep the Activity list for" Foreground="{StaticResource Ink}" VerticalAlignment="Center" Margin="0,0,10,8"/>
+                            <TextBlock Text="Keep the Activity list for" Foreground="{DynamicResource Ink}" VerticalAlignment="Center" Margin="0,0,10,8"/>
                             <ComboBox x:Name="ActivityKeepBox" MinWidth="160" Padding="8,4" Margin="0,0,0,8" SelectionChanged="ActivityKeep_Changed">
                                 <ComboBoxItem Content="This session only" Tag="0"/>
                                 <ComboBoxItem Content="1 day" Tag="1"/>

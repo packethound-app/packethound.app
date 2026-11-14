@@ -30,11 +30,20 @@ public sealed class Settings
     /// <summary>How long "Decide later" postpones a prompt, in minutes.</summary>
     public int SnoozeMinutes { get; set; } = 10;
 
+    /// <summary>The duration the prompt starts on. LastUsed: whichever was picked last time.</summary>
+    public PromptDuration DefaultPromptDuration { get; set; } = PromptDuration.Forever;
+
+    /// <summary>The duration picked with the last Allow or Block in a prompt (never LastUsed).</summary>
+    public PromptDuration LastPromptDuration { get; set; } = PromptDuration.Forever;
+
     /// <summary>Default outbound action per firewall profile before PacketHound changed it (restored on cleanup).</summary>
     public Dictionary<int, int>? OriginalOutboundActions { get; set; }
 
     /// <summary>Whether "Filtering Platform Connection" failure auditing was already on before PacketHound.</summary>
     public bool? AuditFailureWasEnabled { get; set; }
+
+    /// <summary>Light, dark, or the same as the Windows app mode.</summary>
+    public ThemeChoice Theme { get; set; } = ThemeChoice.System;
 
     /// <summary>Check the website for a newer version once a week.</summary>
     public bool CheckForUpdates { get; set; } = true;
@@ -79,6 +88,14 @@ public sealed class Settings
         File.Move(tmp, FilePath, overwrite: true);
     }
 }
+
+/// <summary>The colour theme. Saved by name ("System", "Light", "Dark").</summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<ThemeChoice>))]
+public enum ThemeChoice { System, Light, Dark }
+
+/// <summary>How long a rule made in the prompt lasts. Saved by name.</summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<PromptDuration>))]
+public enum PromptDuration { Forever, UntilQuit, OneHour, RestOfToday, LastUsed }
 
 /// <summary>A list's sort: the row property it's sorted by and the direction.</summary>
 public sealed record SortSetting(string Member, bool Descending);

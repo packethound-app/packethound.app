@@ -140,11 +140,14 @@ Code signing isn't set up yet. The script has commented-out `SignTool` lines to 
      **Status** column shows temporary and disabled rules, and rules whose program is gone
      (**Program not found**, tinted red; **Remove missing** deletes them). Remembered installers and
      updaters are listed with the type *Installer / updater*.
-   - **Activity**: blocked attempts and what happened to each. Double-click a row to copy its IP address;
+   - **Activity**: blocked attempts and what happened to each, with the date and time. Search by app, host,
+     IP address, protocol or result (`:80` finds port 80; several words narrow it down). Double-click a row to copy its IP address;
      right-click to copy it or the host name, or to decide about an app that's still waiting. The list is kept
      across restarts for 1 day by default (Settings › Activity: this session only, 1, 7 or 30 days), in
      `C:\ProgramData\PacketHound\activity.jsonl`; **Clear** empties it.
-   - **Settings**, including **Updates**: once a week PacketHound asks https://packethound.app/version.php
+   - **Settings**, including **Appearance** (Light, Dark, or Same as Windows, which follows the Windows app
+     mode), **Prompts** (what the prompt's *Duration* starts on: Forever, until the app quits, for 1 hour,
+     for the rest of today, or **Remember last selection**) and **Updates**: once a week PacketHound asks https://packethound.app/version.php
      for the latest version number (on by default; untick to stop, or use **Check now**). If there's a newer
      version, the main window, the tray menu and a notification link to the download page. It never
      downloads or installs anything itself. Its own outbound access is a rule allowing HTTPS (TCP 443) only,
